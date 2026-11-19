@@ -4,6 +4,10 @@
 
 Meerkat 面向单用户、多台受信任设备。用户在一台桌面设备上打开 Meerkat，管理已配对的 macOS/Windows 设备，并在任一设备上打开 DSH。
 
+![Meerkat 系统架构，展示内嵌 Go Hub、Web UI、Edge、Agent 与本地 Web 开发用的 Node Center](../images/architecture.svg)
+
+跨设备的 Hub 与 Edge 通过内嵌 Tailscale 通信。独立的 Node Center 为浏览器中的 Web UI 提供本地开发服务。
+
 ```mermaid
 flowchart LR
   User[单用户] --> Desktop[Meerkat Desktop]
