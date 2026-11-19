@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"claude-sess-002","cwd":"/tmp/work","model":"claude-test","claude_code_version":"2.1.304"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"需要先看目录"},{"type":"text","text":"我先列目录"},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls -la"}}]},"session_id":"claude-sess-002"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"file-a\nfile-b"}]}]},"session_id":"claude-sess-002"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"共 2 个文件"}]},"session_id":"claude-sess-002"}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":345,"num_turns":2,"result":"共 2 个文件","session_id":"claude-sess-002"}

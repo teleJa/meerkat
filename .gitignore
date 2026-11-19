@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+web/dist/
+dist/
+
+# local
+*.local
+.DS_Store
+# runtime artifacts
+.runtime/
+center/data/
+edge/bin/
+
+# local binaries / packaged runtime
+/bin/
+/desktop/MeerkatDesktop/bin/
+/desktop/MeerkatDesktop/runtime/
+# playwright
+/web/test-results/
+/web/playwright-report/

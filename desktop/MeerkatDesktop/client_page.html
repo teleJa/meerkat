@@ -1,0 +1,1356 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0c0f">
+<title>Meerkat</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0c0f;
+    --card: #15171c;
+    --card2: #1c1f26;
+    --line: #2a2e37;
+    --ink: #f4f5f7;
+    --muted: #9aa1ad;
+    --blue: #3b82f6;
+    --green: #34d399;
+    --amber: #fbbf24;
+    --red: #fb7185;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { min-height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 14px; padding-bottom: calc(86px + env(safe-area-inset-bottom));
+  }
+  button, input, textarea { font: inherit; }
+  button { border: 0; border-radius: 9px; padding: 9px 12px; background: var(--blue); color: #fff; font-weight: 600; min-height: 44px; }
+  button.secondary { background: #272b33; color: var(--ink); }
+  button.danger { background: #3a1d24; color: #ffb4c0; }
+  button:disabled { opacity: .5; }
+  input[type=password], input[type=text] {
+    width: 100%; background: #0e1014; color: var(--ink); border: 1px solid var(--line);
+    border-radius: 9px; padding: 10px 11px; outline: none;
+  }
+  input:focus { border-color: #3b82f6; }
+  a { color: #93c5fd; }
+  .muted { color: var(--muted); font-size: 12px; line-height: 1.5; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row.wrap { flex-wrap: wrap; }
+  .grow { flex: 1; min-width: 0; }
+  .hidden { display: none !important; }
+  .topbar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px 10px;
+    padding-top: max(46px, calc(10px + env(safe-area-inset-top)));
+    background: rgba(11,12,15,.94); backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { font-size: 18px; font-weight: 800; letter-spacing: .2px; }
+  .chip {
+    margin-left: auto; font-size: 11px; padding: 4px 8px; border-radius: 999px;
+    background: #23262d; color: var(--muted); white-space: nowrap;
+  }
+  .chip.ok { background: rgba(52,211,153,.14); color: var(--green); }
+  .chip.warn { background: rgba(251,191,36,.14); color: var(--amber); }
+  .chip.bad { background: rgba(251,113,133,.14); color: var(--red); }
+  .iconbtn { background: transparent; color: var(--muted); padding: 6px 8px; font-size: 18px; min-width: 44px; min-height: 44px; }
+  .banner {
+    margin: 10px 16px 0; padding: 12px; border: 1px solid rgba(251,191,36,.35);
+    background: rgba(251,191,36,.08); border-radius: 12px;
+  }
+  .banner b { color: var(--amber); }
+  main { padding: 16px; max-width: 760px; margin: 0 auto; }
+  .view { animation: fade .16s ease-out; }
+  @keyframes fade { from { opacity: .4; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+  .section-title { display: flex; align-items: baseline; gap: 8px; margin: 2px 0 10px; }
+  .section-title h2 { font-size: 16px; margin: 0; }
+  .section-title .count { color: var(--muted); font-size: 12px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 13px;
+    padding: 14px; margin-bottom: 10px;
+  }
+  .card.clickable { min-height: 84px; }
+  .card.clickable:active { background: var(--card2); transform: scale(.995); }
+  .card h3 { margin: 0 0 4px; font-size: 15px; }
+  .card .sub { color: var(--muted); font-size: 12px; }
+  .status-line { display: flex; align-items: center; gap: 7px; margin-top: 7px; flex-wrap: wrap; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #6b7280; flex: 0 0 auto; }
+  .dot.online { background: var(--green); box-shadow: 0 0 0 3px rgba(52,211,153,.12); }
+  .dot.error { background: var(--red); }
+  .pill { font-size: 11px; color: var(--muted); background: #22262e; padding: 3px 7px; border-radius: 999px; }
+  .pill.ok { color: var(--green); background: rgba(52,211,153,.12); }
+  .pill.warn { color: var(--amber); background: rgba(251,191,36,.12); }
+  .pill.bad { color: var(--red); background: rgba(251,113,133,.12); }
+  .empty {
+    border: 1px dashed var(--line); border-radius: 13px; padding: 26px 16px;
+    text-align: center; color: var(--muted);
+  }
+  .empty b { display: block; color: var(--ink); margin-bottom: 6px; }
+  .empty button { display: block; margin: 10px auto 0; }
+  .toast {
+    position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom));
+    transform: translateX(-50%) translateY(8px); background: #f4f5f7; color: #111;
+    padding: 9px 14px; border-radius: 10px; font-size: 13px; font-weight: 600;
+    opacity: 0; pointer-events: none; transition: .18s; max-width: 86vw; text-align: center; z-index: 50;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .tabbar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    display: flex; justify-content: space-around; align-items: stretch;
+    background: rgba(17,19,24,.97); border-top: 1px solid var(--line);
+  }
+  .tabbar button {
+    flex: 1; background: transparent; color: var(--muted); border-radius: 0;
+    padding: 10px 4px calc(28px + env(safe-area-inset-bottom)); font-size: 11px; font-weight: 600; min-height: 58px;
+  }
+  .tabbar button.active { color: #dbeafe; }
+  /* 底部 tab 图标与桌面侧栏同一套线性图标（lucide，stroke-width 2、圆角端点）：
+     桌面端侧栏用的是 16px 的 svg，这里给 20px 更好点按，视觉重量与字号 11px 相称。 */
+  .tabbar .ticon { display: block; height: 20px; line-height: 0; margin-bottom: 2px; }
+  .tabbar .ticon svg { width: 20px; height: 20px; display: block; margin: 0 auto; }
+  .kv { display: grid; grid-template-columns: 86px 1fr; gap: 7px 10px; font-size: 12px; }
+  .kv .k { color: var(--muted); }
+  .kv .v { word-break: break-all; }
+  .log {
+    white-space: pre-wrap; word-break: break-all; background: #0e1014; border: 1px solid var(--line);
+    border-radius: 10px; padding: 9px; font-size: 10px; line-height: 1.45; max-height: 220px; overflow: auto;
+    color: #aab2c0;
+  }
+  .pull {
+    height: 0; overflow: hidden; text-align: center; color: var(--muted); font-size: 12px;
+    transition: height .12s, color .12s;
+  }
+  .pull.active { color: var(--blue); font-weight: 600; }
+  .detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .detail-head h2 { margin: 0; font-size: 17px; flex: 1; }
+  .task-request {
+    white-space: pre-wrap; word-break: break-word; background: #0e1014; border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px; font-size: 12px; line-height: 1.55; max-height: 260px; overflow: auto;
+  }
+  .turn { border-top: 1px solid var(--line); padding-top: 9px; margin-top: 9px; }
+  .turn:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+  .turn .turn-head { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+  .dsh { padding: 0; }
+  /* DSH runs edge-to-edge: Meerkat chrome is hidden, the iframe owns the
+     viewport and the injected DSH CSS reserves the same 44px top strip. */
+  #view-dsh {
+    --dsh-top-inset: max(24px, env(safe-area-inset-top));
+    position: fixed; inset: 0; z-index: 60; display: none; flex-direction: column;
+    background: var(--bg);
+    padding-top: var(--dsh-top-inset);
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+  #view-dsh:not(.hidden) { display: flex; }
+  body.dsh-mode { padding-bottom: 0; overflow: hidden; }
+  body.dsh-mode .topbar, body.dsh-mode #tabbar, body.dsh-mode #loginBanner { display: none !important; }
+  body.dsh-mode main { padding: 0; max-width: none; }
+  .dsh-top {
+    position: absolute; top: var(--dsh-top-inset); left: 0; right: 0; z-index: 4;
+    display: flex; align-items: center; gap: 8px;
+    height: 44px; padding: 3px 8px;
+    background: linear-gradient(to bottom, rgba(11,12,15,.94), rgba(11,12,15,.58));
+  }
+  .dsh-btn {
+    width: 38px; height: 38px; min-height: 38px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%; background: rgba(21,23,28,.94); color: var(--ink);
+    border: 1px solid var(--line); font-size: 18px; line-height: 1;
+  }
+  .dsh-info {
+    flex: 1; min-width: 0; height: 38px; min-height: 38px;
+    display: flex; align-items: center; gap: 8px; padding: 0 10px;
+    border-radius: 999px; background: rgba(21,23,28,.94);
+    border: 1px solid var(--line); color: var(--ink); text-align: left;
+  }
+  #dshTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; font-size: 13px; }
+  .dsh-chevron { color: var(--muted); font-size: 12px; }
+  .dsh-details {
+    position: absolute; top: calc(var(--dsh-top-inset) + 48px); left: 8px; right: 8px; z-index: 5;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px; box-shadow: 0 16px 46px rgba(0,0,0,.45);
+  }
+  .dshwrap { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #000; }
+  .dshwrap iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+  .dshoverlay {
+    position: absolute; inset: 44px 0 0 0; display: flex; flex-direction: column; gap: 10px;
+    align-items: center; justify-content: center; text-align: center; padding: 20px;
+    background: var(--bg); color: var(--muted); font-size: 13px; z-index: 2;
+  }
+  .spinner {
+    width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--line);
+    border-top-color: var(--blue); animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .wsbadge { font-size: 11px; padding: 4px 8px; border-radius: 999px; background: #23262d; color: var(--muted); white-space: nowrap; }
+  .wsbadge.ok { background: rgba(52,211,153,.12); color: var(--green); }
+  .wsbadge.bad { background: rgba(251,113,133,.12); color: var(--red); }
+  @media (prefers-color-scheme: light) {
+    :root {
+      color-scheme: light;
+      --bg: #f4f5f7;
+      --card: #ffffff;
+      --card2: #f0f2f6;
+      --line: #e3e6ec;
+      --ink: #111318;
+      --muted: #667085;
+      --blue: #2563eb;
+      --green: #0f9f6e;
+      --amber: #b45309;
+      --red: #d92d20;
+    }
+    body { background: var(--bg); color: var(--ink); }
+    .topbar { background: rgba(244,245,247,.94); }
+    .card { background: var(--card); }
+    .card.clickable { min-height: 84px; }
+  .card.clickable:active { background: var(--card2); transform: scale(.995); }
+    .empty { border-color: var(--line); }
+    .tabbar { background: rgba(255,255,255,.97); }
+    .tabbar button { color: var(--muted); }
+    .tabbar button.active { color: #1d4ed8; }
+    button.secondary { background: #e9edf3; color: var(--ink); }
+    button.danger { background: #fee4e2; color: #b42318; }
+    input[type=password], input[type=text] { background: #fff; color: var(--ink); border-color: var(--line); }
+    .log, .task-request { background: #f7f8fa; color: #28303c; border-color: var(--line); }
+    .pill { background: #eef1f5; color: var(--muted); }
+    .chip { background: #eef1f5; color: var(--muted); }
+    .banner { border-color: rgba(180,83,9,.28); background: rgba(251,191,36,.14); }
+    .dsh-top { background: linear-gradient(to bottom, rgba(244,245,247,.96), rgba(244,245,247,.66)); }
+    .dsh-btn, .dsh-info { background: rgba(255,255,255,.94); border-color: var(--line); color: var(--ink); }
+    .dsh-details { box-shadow: 0 16px 46px rgba(16,24,40,.18); }
+    .dshoverlay { background: var(--bg); }
+    .wsbadge { background: #eef1f5; color: var(--muted); }
+    .spinner { border-color: #d9dee7; border-top-color: var(--blue); }
+    .toast { background: #111; color: #fff; }
+  }
+  @media (min-width: 700px) { body { font-size: 15px; } main { padding: 22px; } }
+</style>
+</head>
+<body data-dsh-device="">
+<header class="topbar">
+  <div class="brand">Meerkat</div>
+  <div id="netChip" class="chip">连接中…</div>
+  <button class="iconbtn" id="refreshBtn" title="刷新">↻</button>
+</header>
+
+<div id="loginBanner" class="banner hidden">
+  <div><b>内嵌网络需要登录 Tailscale</b></div>
+  <div class="muted" style="margin:4px 0 9px">手机上的 Tailscale App 不用开；这里用的是 App 内置的独立节点。</div>
+  <div class="row wrap">
+    <button id="openAuthBtn">打开登录页</button>
+    <button class="secondary" id="copyAuthBtn">复制链接</button>
+  </div>
+  <div id="loginMsg" class="muted" style="margin-top:7px"></div>
+</div>
+
+<main>
+  <section id="view-devices" class="view">
+    <div class="section-title"><h2>设备</h2><span class="count" id="deviceCount"></span></div>
+    <div id="pullHint" class="pull">下拉刷新</div>
+    <div id="deviceList"></div>
+  </section>
+
+  <section id="view-tasks" class="view hidden">
+    <div class="section-title"><h2>任务</h2><span class="count" id="taskCount"></span></div>
+    <div id="taskList"></div>
+  </section>
+
+  <section id="view-settings" class="view hidden">
+    <div class="section-title"><h2>设置</h2></div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h3 style="margin:0">内嵌网络</h3>
+        <span id="setChip" class="chip">…</span>
+      </div>
+      <div class="kv" style="margin-top:10px">
+        <div class="k">状态</div><div class="v" id="setState">-</div>
+        <div class="k">后端</div><div class="v" id="setBackend">-</div>
+        <div class="k">Tailscale IP</div><div class="v" id="setIPs">-</div>
+        <div class="k">本地反代</div><div class="v" id="setProxy">-</div>
+        <div class="k">Hub</div><div class="v" id="setHub">-</div>
+      </div>
+      <div class="row wrap" style="margin-top:10px">
+        <button id="openAuthBtn2">打开登录页</button>
+        <button class="secondary" id="copyAuthBtn2">复制链接</button>
+        <button class="secondary" id="probeBtn">探测 Hub</button>
+      </div>
+      <div id="probeOut" class="muted" style="margin-top:8px; white-space:pre-wrap"></div>
+    </div>
+
+    <div class="card" id="pairCard">
+      <div class="row" style="justify-content:space-between">
+        <h3 style="margin:0">设备配对</h3>
+        <span id="credChip" class="chip">未配对</span>
+      </div>
+      <div class="muted" style="margin:7px 0 9px">在 Hub 设置页「移动设备」生成配对码，输入后换取只读设备凭证。凭证存在 Android Keystore，不写日志。</div>
+      <div class="row" style="margin-bottom:8px">
+        <input id="pairCodeInput" class="grow" type="text" placeholder="MEERKAT-XXXX-XXXX"
+               autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false">
+      </div>
+      <div class="row" style="margin-bottom:8px">
+        <input id="pairLabelInput" class="grow" type="text" placeholder="设备名称（可选，例如 iQOO 10）"
+               autocomplete="off" autocapitalize="sentences" autocorrect="off" spellcheck="false">
+      </div>
+      <div id="credHint" class="muted">尚未配对</div>
+      <div class="row wrap" style="margin-top:9px">
+        <button id="pairBtn">配对</button>
+        <button class="secondary" id="rotateBtn" disabled>轮换凭证</button>
+        <button class="danger" id="unpairBtn" disabled>解除配对</button>
+      </div>
+      <div class="kv" id="credMeta" style="margin-top:11px">
+        <div class="k">凭证</div><div class="v mono" id="credId">-</div>
+        <div class="k">过期</div><div class="v" id="credExpiry">-</div>
+        <div class="k">权限</div><div class="v" id="credScopes">-</div>
+        <div class="k">最近使用</div><div class="v" id="credLastUsed">-</div>
+      </div>
+    </div>
+
+    <div id="authWarning" class="banner hidden"></div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h3 style="margin:0">Hub 鉴权（兼容）</h3>
+        <span id="authChip" class="chip">未配置</span>
+      </div>
+      <div class="muted" style="margin:7px 0 9px">admin token 拥有 Hub 全部权限，只用于旧版兼容或调试；日常请使用上面的设备配对。保存后会存入 Keystore。</div>
+      <div class="row">
+        <input id="tokenInput" class="grow" type="password" placeholder="粘贴 admin token"
+               autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+        <button class="secondary" id="pasteBtn">粘贴</button>
+        <button class="secondary" id="showBtn">显示</button>
+      </div>
+      <div id="tokenHint" class="muted" style="margin-top:6px">未输入 token</div>
+      <div class="row" style="margin-top:9px">
+        <button id="saveTokenBtn">保存</button>
+        <button class="danger" id="clearTokenBtn">清除</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h3 style="margin:0">日志</h3>
+        <span class="muted">最近 4 KB</span>
+      </div>
+      <pre id="logTail" class="log">加载中…</pre>
+    </div>
+  </section>
+
+  <section id="view-detail" class="view hidden">
+    <div class="detail-head">
+      <button class="secondary" id="detailBack">← 返回</button>
+      <h2>任务详情</h2>
+    </div>
+    <div id="detailBody"></div>
+  </section>
+
+  <section id="view-dsh" class="view dsh hidden">
+    <div class="dsh-top">
+      <button class="dsh-btn" id="dshBack" aria-label="返回设备列表">←</button>
+      <button class="dsh-info" id="dshInfo" aria-expanded="false">
+        <span id="dshTitle">DSH</span>
+        <span id="dshWs" class="wsbadge">WS 检测中</span>
+        <span class="dsh-chevron">⌄</span>
+      </button>
+      <button class="dsh-btn" id="dshReload" aria-label="重载 DSH">↻</button>
+    </div>
+    <div id="dshDetails" class="dsh-details hidden">
+      <div class="kv">
+        <div class="k">设备</div><div class="v mono" id="dshDeviceId">-</div>
+        <div class="k">DSH 版本</div><div class="v" id="dshVersion">-</div>
+        <div class="k">WebSocket</div><div class="v" id="dshWsDetail">检测中</div>
+      </div>
+      <div class="row wrap" style="margin-top:10px">
+        <button class="secondary" id="dshWsRetry">重测 WS</button>
+        <button class="secondary" id="dshCloseDetails">收起</button>
+      </div>
+    </div>
+    <div class="dshwrap">
+      <iframe id="dshFrame" title="DSH" referrerpolicy="no-referrer"></iframe>
+      <div id="dshLoading" class="dshoverlay">
+        <div class="spinner"></div>
+        <div id="dshLoadingText">正在连接设备 DSH…</div>
+      </div>
+      <div id="dshError" class="dshoverlay hidden">
+        <div style="font-size:15px;color:var(--ink)">DSH 打不开</div>
+        <div id="dshErrorText" class="muted"></div>
+        <div class="row wrap" style="justify-content:center">
+          <button id="dshRetry">重试</button>
+          <button class="secondary" id="dshWsRetryError">只测 WebSocket</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<nav id="tabbar" class="tabbar">
+  <button data-tab="devices" class="active">
+    <span class="ticon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" />
+      </svg>
+    </span>设备
+  </button>
+  <button data-tab="tasks">
+    <span class="ticon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M13 5h8" />
+        <path d="M13 12h8" />
+        <path d="M13 19h8" />
+        <path d="m3 17 2 2 4-4" />
+        <rect x="3" y="4" width="6" height="6" rx="1" />
+      </svg>
+    </span>任务
+  </button>
+  <button data-tab="settings">
+    <span class="ticon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    </span>设置
+  </button>
+</nav>
+
+<div id="toast" class="toast"></div>
+
+<script>
+'use strict';
+
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined) node.textContent = text;
+  return node;
+};
+const b64url = (text) => {
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+const escapeHtml = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+const deviceStatusLabel = (status) => {
+  const s = String(status || '').toLowerCase();
+  if (s === 'online') return '在线';
+  if (s === 'offline') return '离线';
+  return status || '未知';
+};
+const taskStatusLabel = (status) => {
+  const s = String(status || '').toLowerCase();
+  return ({ done: '成功', succeeded: '成功', completed: '完成', ok: '成功', failed: '失败', error: '失败', canceled: '已取消', cancelled: '已取消', cancel_requested: '取消中', running: '运行中', pending: '等待中', queued: '排队中' })[s] || status || '-';
+};
+const taskTone = (status) => {
+  const s = String(status || '').toLowerCase();
+  if (['done', 'succeeded', 'completed', 'ok'].includes(s)) return 'ok';
+  if (['failed', 'error', 'canceled', 'cancelled'].includes(s)) return 'bad';
+  return 'warn';
+};
+const fmtTime = (iso) => {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return iso;
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+const state = {
+  view: 'devices',
+  tsnet: {},
+  devices: [],
+  tasks: [],
+  configured: false,
+  authKind: '',
+  authState: '',
+  credentialId: '',
+  credentialLabel: '',
+  credentialExpiresAt: '',
+  credentialDays: null,
+  credentialScopes: [],
+  credentialError: '',
+  currentDevice: null,
+  currentTask: null,
+  dshUrl: '',
+  dshDevice: '',
+  authUrl: '',
+  loadingDevices: false,
+  devicesLoaded: false,
+  deviceError: '',
+  loadingTasks: false,
+  taskError: '',
+  dshStarting: false,
+  // dshError 记住上一次加载失败的原因；非空时禁止复用 iframe（要重来）。
+  dshError: '',
+  // pendingDsh 是加载期间用户又点了另一台设备时的目标，等当前加载结束再切。
+  pendingDsh: '',
+};
+
+function toast(message) {
+  const box = $('toast');
+  box.textContent = message;
+  box.classList.add('show');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => box.classList.remove('show'), 2400);
+}
+
+async function getJSON(url, options) {
+  const response = await fetch(url, options);
+  const text = await response.text();
+  let data;
+  try { data = JSON.parse(text); } catch (e) { throw new Error('HTTP ' + response.status + ': ' + text.slice(0, 180)); }
+  if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+  return data;
+}
+
+function setChip(node, text, tone) {
+  node.textContent = text;
+  node.className = 'chip' + (tone ? ' ' + tone : '');
+}
+
+function credentialStateLabel() {
+  if (state.authKind === 'admin') return '兼容模式';
+  const current = state.authState || (state.configured ? 'ok' : 'none');
+  if (current === 'expiring') return (state.credentialDays == null ? '' : state.credentialDays + ' 天后过期');
+  return ({
+    none: '未配对', ok: '已配对', expiring: '即将过期', expired: '已过期',
+    revoked: '已撤销', invalid: '需重新配对', unreadable: '不可读',
+  })[current] || current;
+}
+
+function credentialHint() {
+  if (state.authKind === 'admin') return '当前使用 admin token（全权限），建议改用设备配对';
+  const current = state.authState || (state.configured ? 'ok' : 'none');
+  if (current === 'none') return '尚未配对';
+  if (current === 'ok') return '已配对 · 只读设备凭证，Hub 请求自动携带';
+  if (current === 'expiring') return '凭证将在 ' + (state.credentialDays == null ? '不到 7' : state.credentialDays) + ' 天后过期，建议现在轮换';
+  if (current === 'expired') return '凭证已过期，请重新配对';
+  if (current === 'revoked') return '凭证已被 Hub 撤销，请重新配对';
+  if (current === 'invalid') return '凭证无效，请重新配对';
+  if (current === 'unreadable') return '凭证不可读，请重新配对';
+  return current;
+}
+
+function updateAuthUI() {
+  const current = state.authState || (state.configured ? 'ok' : 'none');
+  const adminCompat = state.authKind === 'admin';
+  const bad = ['expired', 'revoked', 'invalid', 'unreadable'].includes(current);
+  const warn = current === 'expiring' || current === 'none' || adminCompat;
+  setChip($('credChip'), credentialStateLabel(), bad ? 'bad' : warn ? 'warn' : 'ok');
+  $('credHint').textContent = credentialHint();
+  $('credId').textContent = state.credentialId || '-';
+  $('credExpiry').textContent = state.credentialExpiresAt ? fmtTime(state.credentialExpiresAt) : '-';
+  $('credScopes').textContent = (state.credentialScopes || []).join('、') || '-';
+  $('credLastUsed').textContent = state.credentialLastUsedAt ? fmtTime(state.credentialLastUsedAt) : '-';
+  const mobile = state.authKind === 'mobile' && state.credentialId;
+  $('rotateBtn').disabled = !mobile;
+  $('unpairBtn').disabled = !state.configured;
+  const warning = $('authWarning');
+  if (bad) {
+    warning.textContent = state.credentialError || credentialHint();
+    warning.classList.remove('hidden');
+  } else if (adminCompat) {
+    warning.textContent = '当前使用 admin token（拥有全部权限）。建议在 Hub 生成配对码，改用只读移动设备凭证。';
+    warning.classList.remove('hidden');
+  } else if (current === 'expiring') {
+    warning.textContent = '移动设备凭证将在 ' + (state.credentialDays == null ? '不到 7' : state.credentialDays) + ' 天后过期，请轮换或重新配对。';
+    warning.classList.remove('hidden');
+  } else {
+    warning.classList.add('hidden');
+  }
+  const chip = $('authChip');
+  if (state.authKind === 'mobile') {
+    chip.textContent = '移动凭证';
+    chip.className = 'chip ok';
+  } else if (state.authKind === 'admin' && state.configured) {
+    chip.textContent = 'admin token';
+    chip.className = 'chip warn';
+  } else {
+    chip.textContent = '未配置';
+    chip.className = 'chip warn';
+  }
+}
+
+function clientErrorMessage(payload, fallback) {
+  return (payload && (payload.message || payload.error)) || fallback;
+}
+
+function applyAuthFailure(payload) {
+  const code = payload && payload.error;
+  const mapping = {
+    mobile_credential_revoked: 'revoked',
+    mobile_credential_expired: 'expired',
+    mobile_credential_invalid: 'invalid',
+    credential_unreadable: 'unreadable',
+  };
+  if (mapping[code]) {
+    state.authState = mapping[code];
+    state.credentialError = clientErrorMessage(payload, '凭证不可用，请重新配对');
+    updateAuthUI();
+  }
+}
+
+function updateNetUI() {
+  const t = state.tsnet || {};
+  const running = t.state === 'running';
+  const needsLogin = t.state === 'needs_login';
+  setChip($('netChip'), running ? '已连接' : needsLogin ? '待登录' : (t.state === 'error' ? '异常' : '连接中…'), running ? 'ok' : needsLogin ? 'warn' : 'bad');
+  $('loginBanner').classList.toggle('hidden', !needsLogin);
+  state.authUrl = t.auth_url || '';
+  $('setState').textContent = t.state || '-';
+  $('setBackend').textContent = t.backend_state || '-';
+  $('setIPs').textContent = (t.tailscale_ips || []).join(', ') || '-';
+  $('setProxy').textContent = t.proxy_url || '-';
+  $('setHub').textContent = t.hub_addr || '-';
+  const dshVersion = t.dsh_version
+    ? t.dsh_version + (t.dsh_commit ? ' (' + t.dsh_commit + ')' : '')
+    : '-';
+  $('dshVersion').textContent = dshVersion;
+  setChip($('setChip'), running ? '运行中' : needsLogin ? '待登录' : '连接中', running ? 'ok' : needsLogin ? 'warn' : 'bad');
+  $('logTail').textContent = (t.log_tail || '(empty)').slice(-4000);
+  if (typeof t.configured === 'boolean') state.configured = t.configured;
+  state.authKind = t.auth_kind || '';
+  state.authState = t.auth_state || (state.configured ? 'ok' : 'none');
+  state.credentialId = t.credential_id || '';
+  state.credentialLabel = t.credential_label || '';
+  state.credentialExpiresAt = t.credential_expires_at || '';
+  state.credentialDays = (t.credential_days === undefined ? null : t.credential_days);
+  state.credentialScopes = t.credential_scopes || [];
+  state.credentialLastUsedAt = t.credential_last_used_at || '';
+  state.credentialError = t.credential_error || '';
+  updateAuthUI();
+  updateTokenHint();
+}
+
+async function refreshState() {
+  try {
+    const t = await getJSON('/client/state');
+    state.tsnet = t;
+    updateNetUI();
+    syncTheme();
+    if (t.state === 'running' && state.configured && !state.devicesLoaded && !state.loadingDevices) {
+      void loadDevices();
+    }
+  } catch (e) {
+    setChip($('netChip'), '状态读取失败', 'bad');
+  }
+}
+
+function renderDevices() {
+  const list = $('deviceList');
+  list.innerHTML = '';
+  $('deviceCount').textContent = state.devices.length ? state.devices.length + ' 台' : '';
+  if (!state.configured) {
+    const empty = el('div', 'empty');
+    empty.innerHTML = '<b>先配对设备</b>在设置页输入 Hub 配对码，或保存 admin token 兼容凭据。<br><br>';
+    const btn = el('button', '', '去设置');
+    btn.onclick = () => navigate('#/settings');
+    empty.appendChild(btn);
+    list.appendChild(empty);
+    return;
+  }
+  if (state.loadingDevices && state.devices.length === 0) {
+    list.appendChild(el('div', 'empty', '正在加载设备…'));
+    return;
+  }
+  if (state.deviceError && state.devices.length === 0) {
+    const box = el('div', 'empty');
+    box.innerHTML = '<b>设备加载失败</b>' + escapeHtml(state.deviceError);
+    const btn = el('button', '', '重试');
+    btn.onclick = () => loadDevices();
+    box.appendChild(btn);
+    if (['expired', 'revoked', 'invalid', 'unreadable', 'none'].includes(state.authState)) {
+      const pairBtn = el('button', 'secondary', '去设置配对');
+      pairBtn.onclick = () => navigate('#/settings');
+      box.appendChild(pairBtn);
+    }
+    list.appendChild(box);
+    return;
+  }
+  if (state.devices.length === 0) {
+    const empty = el('div', 'empty');
+    empty.innerHTML = '<b>还没有设备</b>确认 Hub 已运行，且 Edge 已加入工作区。';
+    const btn = el('button', 'secondary', '重新加载');
+    btn.onclick = () => loadDevices();
+    empty.appendChild(btn);
+    list.appendChild(empty);
+    return;
+  }
+  for (const d of state.devices) {
+    const card = el('div', 'card clickable');
+    const name = d.name || d.hostname || d.id;
+    const online = d.status === 'online';
+    const dsh = d.dsh || {};
+    const dshLabel = dsh.status === 'running' ? 'DSH 运行中' : dsh.status === 'error' ? 'DSH 异常' : dsh.status === 'stopped' ? 'DSH 未运行' : (dsh.installed ? 'DSH 未启动' : 'DSH 未安装');
+    const dshTone = dsh.status === 'running' ? 'ok' : dsh.status === 'error' ? 'bad' : 'warn';
+    card.innerHTML = `
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div class="grow"><h3>${escapeHtml(name)}</h3><div class="sub">${escapeHtml((d.hostname && d.hostname !== name) ? d.hostname : d.id)}</div></div>
+        <span class="pill ${online ? 'ok' : 'bad'}">${escapeHtml(deviceStatusLabel(d.status))}</span>
+      </div>
+      <div class="status-line">
+        <span class="dot ${online ? 'online' : 'error'}"></span>
+        <span class="pill ${dshTone}">${escapeHtml(dshLabel)}</span>
+        ${dsh.profile ? `<span class="pill">profile: ${escapeHtml(dsh.profile)}</span>` : ''}
+        ${dsh.mode ? `<span class="pill">${escapeHtml(dsh.mode)}</span>` : ''}
+      </div>
+      ${dsh.error ? `<div class="muted" style="margin-top:7px">${escapeHtml(dsh.error)}</div>` : ''}
+    `;
+    // 交给 route()/openDsh 决定「复用还是重载」：直接调 openDsh 会绕过同设备
+    // 判断，点回同一台设备时无谓地重载一次 iframe。
+    card.onclick = () => {
+      if (d.harness_available || dsh.status === 'running') navigate('#/dsh/' + encodeURIComponent(d.id));
+      else toast('这台设备还没有可用的 DSH');
+    };
+    list.appendChild(card);
+  }
+}
+
+async function loadDevices() {
+  if (state.loadingDevices) return;
+  if (!state.configured) { state.devices = []; renderDevices(); return; }
+  state.loadingDevices = true;
+  state.deviceError = '';
+  renderDevices();
+  try {
+    const payload = await getJSON('/client/devices');
+    if (!payload.ok) {
+      applyAuthFailure(payload);
+      if (payload.error === 'not_configured') {
+        state.configured = false;
+        updateNetUI();
+      } else {
+        state.deviceError = clientErrorMessage(payload, '设备加载失败');
+        toast(state.deviceError);
+      }
+      state.devices = [];
+      renderDevices();
+      return;
+    }
+    state.devices = payload.devices || [];
+    renderDevices();
+  } catch (e) {
+    state.deviceError = e.message;
+    toast('设备加载失败：' + e.message);
+    state.devices = [];
+    renderDevices();
+  } finally {
+    state.loadingDevices = false;
+    state.devicesLoaded = true;
+    // Error/empty branches render while loadingDevices is still true; render
+    // once more after clearing the flag so the page never sticks on "加载中".
+    renderDevices();
+    $('pullHint').style.height = '0px';
+    $('pullHint').textContent = '下拉刷新';
+    $('pullHint').classList.remove('active');
+  }
+}
+
+function renderTasks() {
+  const list = $('taskList');
+  list.innerHTML = '';
+  $('taskCount').textContent = state.tasks.length ? state.tasks.length + ' 条' : '';
+  if (!state.configured) {
+    const empty = el('div', 'empty');
+    empty.innerHTML = '<b>先配对设备</b>在设置页输入 Hub 配对码，或保存 admin token 后加载任务。';
+    list.appendChild(empty);
+    return;
+  }
+  if (state.loadingTasks && state.tasks.length === 0) {
+    list.appendChild(el('div', 'empty', '正在加载任务…'));
+    return;
+  }
+  if (state.taskError && state.tasks.length === 0) {
+    const box = el('div', 'empty');
+    box.innerHTML = '<b>任务加载失败</b>' + escapeHtml(state.taskError);
+    const btn = el('button', '', '重试');
+    btn.onclick = () => loadTasks();
+    box.appendChild(btn);
+    if (['expired', 'revoked', 'invalid', 'unreadable', 'none'].includes(state.authState)) {
+      const pairBtn = el('button', 'secondary', '去设置配对');
+      pairBtn.onclick = () => navigate('#/settings');
+      box.appendChild(pairBtn);
+    }
+    list.appendChild(box);
+    return;
+  }
+  if (state.tasks.length === 0) {
+    const empty = el('div', 'empty');
+    empty.innerHTML = '<b>暂无任务</b>M1 只读，任务由 Hub 侧创建。';
+    list.appendChild(empty);
+    return;
+  }
+  for (const t of state.tasks) {
+    const card = el('div', 'card clickable');
+    card.innerHTML = `
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div class="grow"><h3>${escapeHtml(t.title || t.id)}</h3>
+        <div class="sub">${escapeHtml(t.device_id || '未指定设备')} · ${fmtTime(t.updated_at || t.created_at)}</div></div>
+        <span class="pill ${taskTone(t.status)}">${escapeHtml(taskStatusLabel(t.status))}</span>
+      </div>
+    `;
+    card.onclick = () => openTask(t.id);
+    list.appendChild(card);
+  }
+}
+
+async function loadTasks() {
+  if (state.loadingTasks) return;
+  if (!state.configured) { state.tasks = []; renderTasks(); return; }
+  state.loadingTasks = true;
+  state.taskError = '';
+  renderTasks();
+  try {
+    const payload = await getJSON('/client/tasks');
+    if (!payload.ok) {
+      applyAuthFailure(payload);
+      if (payload.error !== 'not_configured') {
+        state.taskError = clientErrorMessage(payload, '任务加载失败');
+        toast(state.taskError);
+      }
+      state.tasks = [];
+      return;
+    }
+    state.tasks = payload.tasks || [];
+  } catch (e) {
+    state.taskError = e.message;
+    toast('任务加载失败：' + e.message);
+    state.tasks = [];
+  } finally {
+    state.loadingTasks = false;
+    renderTasks();
+  }
+}
+
+function renderDetail(detail) {
+  const box = $('detailBody');
+  box.innerHTML = '';
+  const task = (detail && detail.task) || {};
+  const turns = (detail && detail.turns) || [];
+  const info = el('div', 'card');
+  info.innerHTML = `
+    <h3>${escapeHtml(task.title || task.id || '任务')}</h3>
+    <div class="status-line">
+      <span class="pill ${taskTone(task.status)}">${escapeHtml(taskStatusLabel(task.status))}</span>
+      <span class="pill">${escapeHtml(task.device_id || '未指定设备')}</span>
+      <span class="pill">${fmtTime(task.created_at)}</span>
+    </div>
+    <div class="muted" style="margin-top:8px">id: <span class="mono">${escapeHtml(task.id || '-')}</span></div>
+    ${task.cwd ? `<div class="muted">cwd: <span class="mono">${escapeHtml(task.cwd)}</span></div>` : ''}
+  `;
+  box.appendChild(info);
+  if (task.request) {
+    const req = el('div', 'card');
+    req.innerHTML = '<div class="muted" style="margin-bottom:6px">请求</div>';
+    const pre = el('div', 'task-request', task.request);
+    req.appendChild(pre);
+    box.appendChild(req);
+  }
+  const turnsCard = el('div', 'card');
+  turnsCard.innerHTML = '<h3 style="margin-bottom:8px">执行记录</h3>';
+  if (!turns.length) {
+    turnsCard.appendChild(el('div', 'muted', '还没有执行记录'));
+  } else {
+    for (const turn of turns) {
+      const item = el('div', 'turn');
+      const head = el('div', 'turn-head');
+      head.innerHTML = `<span>#${escapeHtml(String(turn.seq || '-'))}</span><span class="pill ${taskTone(turn.status)}">${escapeHtml(taskStatusLabel(turn.status))}</span><span>${fmtTime(turn.started_at || turn.created_at)}</span>`;
+      item.appendChild(head);
+      if (turn.request) item.appendChild(el('div', 'task-request', turn.request));
+      if (turn.error) item.appendChild(el('div', 'muted', '错误：' + turn.error));
+      else if (turn.result) item.appendChild(el('div', 'muted', '结果：' + turn.result));
+      turnsCard.appendChild(item);
+    }
+  }
+  box.appendChild(turnsCard);
+}
+
+async function openTask(id) {
+  state.currentTask = id;
+  navigate('#/tasks/' + encodeURIComponent(id));
+  const box = $('detailBody');
+  box.innerHTML = '<div class="empty">正在加载任务详情…</div>';
+  try {
+    const payload = await getJSON('/client/tasks/' + encodeURIComponent(id));
+    if (!payload.ok) { applyAuthFailure(payload); throw new Error(clientErrorMessage(payload, '加载失败')); }
+    renderDetail(payload.detail);
+  } catch (e) {
+    box.innerHTML = `<div class="empty"><b>任务详情加载失败</b>${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function setDshWs(text, tone, detail) {
+  const node = $('dshWs');
+  node.textContent = text;
+  node.className = 'wsbadge' + (tone ? ' ' + tone : '');
+  $('dshWsDetail').textContent = detail || text;
+}
+
+// 更新 DSH 顶栏与详情面板；不碰 iframe。
+function updateDshHeader(deviceId, device) {
+  $('dshTitle').textContent = (device && (device.name || device.hostname)) || deviceId;
+  $('dshDeviceId').textContent = deviceId;
+  $('dshDetails').classList.add('hidden');
+  $('dshInfo').setAttribute('aria-expanded', 'false');
+}
+
+// openDsh 有两种模式：
+//   复用 —— 同一台设备、URL 已就绪、没有出错：只切视图和刷新顶栏，绝不动
+//           iframe.src。切 tab 回来时 iframe 必须保持存活，否则白屏重载，
+//           滚动位置和页面内状态全丢。
+//   重载 —— 换了设备，或显式 force（顶栏「重载」、错误页「重试」）。
+async function openDsh(deviceId, options) {
+  const device = state.devices.find((d) => d.id === deviceId);
+  const force = Boolean(options && options.force);
+  const reusable = !force && state.dshDevice === deviceId && Boolean(state.dshUrl) && !state.dshError;
+  if (reusable) {
+    state.currentDevice = device || state.currentDevice || { id: deviceId };
+    updateDshHeader(deviceId, device);
+    showView('dsh');
+    navigate('#/dsh/' + encodeURIComponent(deviceId));
+    return;
+  }
+  if (state.dshStarting) {
+    // 上一台设备还在加载：记下来，等它结束再处理，避免哈希指向 B 而 iframe 停在 A。
+    if (state.dshDevice !== deviceId) state.pendingDsh = deviceId;
+    return;
+  }
+  state.dshStarting = true;
+  state.pendingDsh = '';
+  state.currentDevice = device || { id: deviceId };
+  state.dshDevice = deviceId;
+  state.dshUrl = '';
+  state.dshError = '';
+  updateDshHeader(deviceId, device);
+  // 兜底触发路径（Go 侧 ExecJS → postMessage）靠这个属性判断"是不是真的在 DSH
+  // 页里"；设备 id 为空说明没进过。主触发在 DSH 页面内部监听 visibilitychange，
+  // 不依赖这里。
+  document.body.setAttribute('data-dsh-device', deviceId || '');
+  $('dshFrame').src = 'about:blank';
+  $('dshFrame').classList.add('hidden');
+  $('dshLoading').classList.remove('hidden');
+  $('dshError').classList.add('hidden');
+  $('dshLoadingText').textContent = '正在连接设备 DSH…';
+  setDshWs('WS 检测中', '', '正在检测 WebSocket');
+  navigate('#/dsh/' + encodeURIComponent(deviceId));
+  try {
+    const payload = await getJSON('/client/harness/' + encodeURIComponent(deviceId));
+    if (!payload.ok) { applyAuthFailure(payload); throw new Error(clientErrorMessage(payload, 'DSH 不可用')); }
+    state.dshUrl = payload.url;
+    state.dshError = '';
+    if (payload.ws_ok) setDshWs('WS 101', 'ok', payload.ws || '101 Switching Protocols');
+    else setDshWs('WS 失败', 'bad', payload.ws_error || 'WebSocket 升级失败');
+    $('dshFrame').src = payload.url;
+    $('dshFrame').classList.remove('hidden');
+    $('dshLoadingText').textContent = '页面已连接，正在加载 DSH…';
+    clearTimeout(openDsh.timer);
+    openDsh.timer = setTimeout(() => {
+      if (!$('dshLoading').classList.contains('hidden')) {
+        $('dshLoading').classList.add('hidden');
+        toast('DSH 页面加载较慢，可点「重载」再试');
+      }
+    }, 15000);
+  } catch (e) {
+    state.dshError = e.message;
+    $('dshLoading').classList.add('hidden');
+    $('dshError').classList.remove('hidden');
+    $('dshErrorText').textContent = e.message;
+    setDshWs('WS 失败', 'bad', e.message);
+  } finally {
+    state.dshStarting = false;
+    const pending = state.pendingDsh;
+    state.pendingDsh = '';
+    if (pending && pending !== state.dshDevice) void openDsh(pending);
+  }
+}
+
+$('dshFrame').addEventListener('load', () => {
+  if (!state.dshUrl) return;
+  clearTimeout(openDsh.timer);
+  $('dshLoading').classList.add('hidden');
+});
+// DSH 页内 shim 的触发结果回传。走这条而不是 console.log：真机上 vivo 把全局
+// log.tag 设成 I，所有 Log.d 都被系统丢弃，logcat 里看不到 [meerkat] dsh-resume。
+// 这里把结果转给 Go，由 Go 写进 files/android-tsnet.log（run-as cat 可读）。
+//
+// 只认固定形状 {meerkat:'resume-report'}；来源不做强校验（跨源 iframe 的
+// event.source 无法与此处可直接比较的对象对齐），但即使被页面伪造，影响也只是
+// 多写一行日志，不触发任何动作。
+window.addEventListener('message', (event) => {
+  const data = event.data;
+  if (!data || typeof data !== 'object' || data.meerkat !== 'resume-report') return;
+  const result = String(data.result == null ? '' : data.result).slice(0, 200);
+  if (!result) return;
+  fetch('/client/dsh-log/' + b64url(result)).catch(() => {});
+});
+$('dshFrame').addEventListener('error', () => {
+  state.dshError = 'WebView 加载失败';
+  $('dshLoading').classList.add('hidden');
+  $('dshError').classList.remove('hidden');
+  $('dshErrorText').textContent = 'WebView 加载失败';
+});
+
+async function probeHarnessWS() {
+  if (!state.dshDevice) return;
+  setDshWs('WS 检测中', '', '正在重新检测');
+  try {
+    const payload = await getJSON('/client/wsprobe/' + encodeURIComponent(state.dshDevice));
+    if (!payload.ok) throw new Error(payload.error || 'WS 失败');
+    setDshWs('WS 101', 'ok', payload.message || '101 Switching Protocols');
+  } catch (e) {
+    setDshWs('WS 失败', 'bad', e.message);
+    toast('WebSocket 探测失败：' + e.message);
+  }
+}
+
+async function saveToken() {
+  const input = $('tokenInput');
+  const token = input.value.trim();
+  if (!token) { toast('先粘贴 admin token'); return; }
+  try {
+    const payload = await getJSON('/client/config/' + b64url(token));
+    if (!payload.ok) throw new Error(payload.error || '保存失败');
+    state.configured = true;
+    state.tsnet.configured = true;
+    state.authKind = 'admin';
+    state.authState = 'ok';
+    state.credentialId = '';
+    state.credentialExpiresAt = '';
+    state.credentialScopes = [];
+    state.devicesLoaded = false;
+    input.value = '';
+    updateNetUI();
+    updateAuthUI();
+    toast('token 已保存');
+    await loadDevices();
+    await loadTasks();
+  } catch (e) {
+    toast('保存失败：' + e.message);
+  }
+}
+
+async function clearToken() {
+  if (!confirm('解除配对并清除已保存的凭证？')) return;
+  try {
+    await getJSON('/client/config/clear');
+    state.configured = false;
+    state.tsnet.configured = false;
+    state.authKind = '';
+    state.authState = 'none';
+    state.credentialId = '';
+    state.credentialExpiresAt = '';
+    state.credentialScopes = [];
+    state.credentialError = '';
+    state.devices = [];
+    state.tasks = [];
+    state.devicesLoaded = false;
+    updateNetUI();
+    updateAuthUI();
+    renderDevices();
+    renderTasks();
+    toast('已解除配对');
+  } catch (e) {
+    toast('清除失败：' + e.message);
+  }
+}
+
+async function pairDevice() {
+  const code = $('pairCodeInput').value.trim();
+  if (!code) { toast('先输入配对码'); return; }
+  $('pairBtn').disabled = true;
+  try {
+    const label = $('pairLabelInput').value.trim() || 'Android 手机';
+    const payload = await getJSON('/client/pair/' + b64url(code) + '/' + b64url(label));
+    if (!payload.ok) throw new Error(clientErrorMessage(payload, '配对失败'));
+    state.configured = true;
+    state.authKind = 'mobile';
+    state.authState = payload.auth_state || 'ok';
+    state.credentialId = payload.credential_id || '';
+    state.credentialError = '';
+    state.devicesLoaded = false;
+    $('pairCodeInput').value = '';
+    updateTokenHint();
+    updateAuthUI();
+    toast('配对成功');
+    await refreshState();
+    await loadDevices();
+    await loadTasks();
+  } catch (e) {
+    applyAuthFailure({ error: '', message: e.message });
+    toast('配对失败：' + e.message);
+  } finally {
+    $('pairBtn').disabled = false;
+  }
+}
+
+async function rotateCredential() {
+  if (!confirm('轮换后旧凭证 5 分钟内仍可用，确定继续？')) return;
+  $('rotateBtn').disabled = true;
+  try {
+    const payload = await getJSON('/client/credential/rotate');
+    if (!payload.ok) throw new Error(clientErrorMessage(payload, '轮换失败'));
+    toast('凭证已轮换');
+    await refreshState();
+  } catch (e) {
+    toast('轮换失败：' + e.message);
+  } finally {
+    updateAuthUI();
+  }
+}
+
+async function pasteToken() {
+  const input = $('tokenInput');
+  // Android 16 WebView denies navigator.clipboard.readText, so prefer the
+  // activity's native ClipboardManager via /client/paste.
+  try {
+    const payload = await getJSON('/client/paste');
+    if (payload.ok && payload.text) {
+      input.value = payload.text.trim();
+      updateTokenHint();
+      input.focus();
+      return;
+    }
+  } catch (e) {}
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text) { toast('剪贴板是空的'); return; }
+    input.value = text.trim();
+    updateTokenHint();
+    input.focus();
+  } catch (e) {
+    toast('无法读取剪贴板，请长按输入框选择「粘贴」');
+  }
+}
+
+function updateTokenHint() {
+  const n = $('tokenInput').value.trim().length;
+  if (n > 0) {
+    $('tokenHint').textContent = '已输入 ' + n + ' 字符' + (state.configured ? '（保存后将替换现有凭证）' : '');
+  } else if (state.authKind === 'mobile') {
+    $('tokenHint').textContent = '已使用移动设备凭证；admin token 输入框可留空';
+  } else if (state.configured) {
+    $('tokenHint').textContent = '已保存（出于安全不显示明文）';
+  } else {
+    $('tokenHint').textContent = '未输入 token';
+  }
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    const ok = document.execCommand('copy'); ta.remove(); return ok;
+  } catch (e) { return false; }
+}
+
+async function openAuth() {
+  if (!state.authUrl) { toast('暂时没有登录链接'); return; }
+  $('loginMsg').textContent = '正在请求系统浏览器…';
+  try {
+    const payload = await getJSON('/client/open/' + b64url(state.authUrl));
+    if (!payload.ok) throw new Error(payload.error || '打开失败');
+    $('loginMsg').textContent = '已请求系统浏览器；没反应就点「复制链接」';
+  } catch (e) {
+    const ok = await copyText(state.authUrl);
+    $('loginMsg').textContent = ok ? '系统打开失败，链接已复制，去浏览器粘贴' : '打开和复制都失败，请查看日志';
+  }
+}
+
+async function copyAuth() {
+  if (!state.authUrl) { toast('暂时没有登录链接'); return; }
+  try {
+    const payload = await getJSON('/client/copy-auth');
+    if (payload.ok) { $('loginMsg').textContent = '登录链接已复制'; return; }
+  } catch (e) {}
+  const ok = await copyText(state.authUrl);
+  $('loginMsg').textContent = ok ? '登录链接已复制' : '复制失败，请长按日志里的链接';
+}
+
+async function probeHub() {
+  $('probeOut').textContent = '探测中…';
+  try {
+    const res = await fetch('/client/probe');
+    $('probeOut').textContent = await res.text();
+  } catch (e) {
+    $('probeOut').textContent = '探测失败：' + e.message;
+  }
+}
+
+function navigate(hash) {
+  if (location.hash === hash) return;
+  location.hash = hash;
+}
+
+function showView(name) {
+  state.view = name;
+  document.body.classList.toggle('dsh-mode', name === 'dsh');
+  if (name !== 'dsh') $('dshDetails').classList.add('hidden');
+  for (const id of ['view-devices', 'view-tasks', 'view-settings', 'view-detail', 'view-dsh']) {
+    $(id).classList.toggle('hidden', id !== 'view-' + name);
+  }
+  const tab = name === 'detail' ? 'tasks' : name === 'dsh' ? '' : name;
+  for (const b of document.querySelectorAll('#tabbar button')) b.classList.toggle('active', b.dataset.tab === tab);
+  $('tabbar').classList.toggle('hidden', name === 'dsh' || name === 'detail');
+  if (name === 'devices') void loadDevices();
+  if (name === 'tasks') void loadTasks();
+  window.scrollTo(0, 0);
+}
+
+function route() {
+  const hash = location.hash.replace(/^#\/?/, '');
+  const parts = hash.split('/').filter(Boolean);
+  if (parts[0] === 'dsh' && parts[1]) {
+    const id = decodeURIComponent(parts[1]);
+    showView('dsh');
+    // openDsh 内部会判断能否复用：同设备且 iframe 已就绪时只切视图，不重载。
+    // 加载期间又切到另一台设备时先记下来，等当前这次加载结束再切，避免哈希
+    // 指向 B 而 iframe 停在 A。
+    if (state.dshStarting) {
+      if (state.dshDevice !== id) state.pendingDsh = id;
+    } else {
+      void openDsh(id);
+    }
+    return;
+  }
+  if (parts[0] === 'tasks' && parts[1]) {
+    const id = decodeURIComponent(parts[1]);
+    showView('detail');
+    if (state.currentTask !== id) void openTask(id);
+    return;
+  }
+  if (parts[0] === 'tasks') { showView('tasks'); return; }
+  if (parts[0] === 'settings') { showView('settings'); return; }
+  showView('devices');
+}
+
+for (const b of document.querySelectorAll('#tabbar button')) {
+  b.addEventListener('click', () => navigate('#/' + b.dataset.tab));
+}
+$('refreshBtn').addEventListener('click', () => {
+  void refreshState();
+  if (state.view === 'devices') void loadDevices();
+  if (state.view === 'tasks') void loadTasks();
+  // DSH 页的顶栏刷新只刷新数据与 WS 探测，不重载 iframe（重载用 DSH 顶栏的 ↻）。
+  if (state.view === 'dsh' && state.dshDevice) void probeHarnessWS();
+  toast('已刷新');
+});
+$('dshBack').addEventListener('click', () => navigate('#/devices'));
+$('detailBack').addEventListener('click', () => navigate('#/tasks'));
+$('dshReload').addEventListener('click', () => openDsh(state.dshDevice, { force: true }));
+$('dshRetry').addEventListener('click', () => openDsh(state.dshDevice, { force: true }));
+$('dshInfo').addEventListener('click', () => {
+  const details = $('dshDetails');
+  const show = details.classList.contains('hidden');
+  details.classList.toggle('hidden', !show);
+  $('dshInfo').setAttribute('aria-expanded', show ? 'true' : 'false');
+});
+$('dshCloseDetails').addEventListener('click', () => {
+  $('dshDetails').classList.add('hidden');
+  $('dshInfo').setAttribute('aria-expanded', 'false');
+});
+$('dshWsRetry').addEventListener('click', probeHarnessWS);
+$('dshWsRetryError').addEventListener('click', probeHarnessWS);
+$('openAuthBtn').addEventListener('click', openAuth);
+$('openAuthBtn2').addEventListener('click', openAuth);
+$('copyAuthBtn').addEventListener('click', copyAuth);
+$('copyAuthBtn2').addEventListener('click', copyAuth);
+$('probeBtn').addEventListener('click', probeHub);
+$('saveTokenBtn').addEventListener('click', saveToken);
+$('clearTokenBtn').addEventListener('click', clearToken);
+$('pairBtn').addEventListener('click', pairDevice);
+$('rotateBtn').addEventListener('click', rotateCredential);
+$('unpairBtn').addEventListener('click', clearToken);
+$('pairCodeInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') pairDevice(); });
+$('pasteBtn').addEventListener('click', pasteToken);
+$('showBtn').addEventListener('click', () => {
+  const input = $('tokenInput');
+  input.type = input.type === 'password' ? 'text' : 'password';
+  $('showBtn').textContent = input.type === 'password' ? '显示' : '隐藏';
+});
+$('tokenInput').addEventListener('input', updateTokenHint);
+$('tokenInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveToken(); });
+window.addEventListener('hashchange', route);
+
+// Pull-to-refresh on the device list. A button also exists in the top bar.
+let pullStart = 0;
+document.addEventListener('touchstart', (e) => {
+  pullStart = (state.view === 'devices' && window.scrollY <= 0) ? e.touches[0].clientY : 0;
+}, { passive: true });
+document.addEventListener('touchmove', (e) => {
+  if (!pullStart) return;
+  const dy = e.touches[0].clientY - pullStart;
+  if (dy <= 0) return;
+  const hint = $('pullHint');
+  const height = Math.min(46, dy * 0.6);
+  hint.style.height = height + 'px';
+  const ready = height >= 30;
+  hint.textContent = ready ? '松开刷新' : '下拉刷新';
+  hint.classList.toggle('active', ready);
+}, { passive: true });
+document.addEventListener('touchend', () => {
+  const hint = $('pullHint');
+  const ready = pullStart && hint.offsetHeight >= 30;
+  hint.style.height = '0px';
+  hint.classList.remove('active');
+  if (ready) {
+    hint.textContent = '刷新中…';
+    hint.style.height = '24px';
+    void loadDevices();
+  } else {
+    hint.textContent = '下拉刷新';
+  }
+  pullStart = 0;
+}, { passive: true });
+
+let lastDshTheme = null;
+function syncTheme() {
+  const dark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  if (lastDshTheme === dark) return;
+  lastDshTheme = dark;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', dark ? '#0b0c0f' : '#f4f5f7');
+  fetch('/client/statusbar/' + (dark ? 'dark' : 'light')).catch(() => {});
+}
+
+// Android hardware back is routed here by MainActivity. Returning true
+// means the page consumed it; false lets the Activity exit/fallback.
+window.__meerkatBack = function () {
+  if (state.view === 'dsh') {
+    if (!$('dshDetails').classList.contains('hidden')) {
+      $('dshDetails').classList.add('hidden');
+      $('dshInfo').setAttribute('aria-expanded', 'false');
+      return true;
+    }
+    navigate('#/devices');
+    return true;
+  }
+  if (state.view === 'detail') { navigate('#/tasks'); return true; }
+  if (state.view === 'tasks' || state.view === 'settings') { navigate('#/devices'); return true; }
+  return false;
+};
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  void refreshState();
+  if (state.view === 'devices') void loadDevices();
+  if (state.view === 'tasks') void loadTasks();
+});
+window.addEventListener('focus', () => { void refreshState(); });
+
+updateTokenHint();
+updateAuthUI();
+refreshState();
+setInterval(refreshState, 2000);
+route();
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "device_id": "dev_a1b2c3d4",
+  "device_secret": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "protocol_version": "1",
+  "center_time": "2026-11-06T05:40:00.000Z",
+  "heartbeat_interval_ms": 10000,
+  "metrics_interval_ms": 5000
+}

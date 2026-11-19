@@ -1,0 +1,11 @@
+{
+  "type": "hello",
+  "protocol_version": "1",
+  "device_id": "dev_a1b2c3d4",
+  "device_secret": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "edge_version": "0.1.0",
+  "boot_id": "boot_1e2d3c4b",
+  "capabilities": [
+    "metrics"
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Meerkat 命令目录刷新",
+    "description": "合并斜杠命令目录的重复刷新。后台会话在切回后获取最新目录。适用于 DeepSeek Harness 0.2.2-rc.2。"
+  }
+}

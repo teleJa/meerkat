@@ -1,0 +1,17 @@
+{
+  "type": "metrics.batch",
+  "stream_id": "str_4f2a",
+  "seq": 21,
+  "sampled_at": "2026-11-06T05:41:00.000Z",
+  "metrics": {
+    "cpu_pct": 18.4,
+    "mem_used_bytes": 20401094656,
+    "mem_total_bytes": 34359738368,
+    "disk_used_bytes": 195421011968,
+    "disk_total_bytes": 494384795648,
+    "gpu_util_pct": 93,
+    "gpu_mem_used_bytes": 11453251584,
+    "gpu_mem_total_bytes": 17179869184,
+    "gpu_temp_c": 72
+  }
+}

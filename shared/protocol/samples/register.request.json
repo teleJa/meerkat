@@ -1,0 +1,16 @@
+{
+  "pairing_token": "mkp_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "protocol_version": "1",
+  "edge_version": "0.1.0",
+  "device": {
+    "name": "MacBook Pro",
+    "hostname": "MacBookPro",
+    "os": "macOS 15.4",
+    "arch": "arm64",
+    "role": "Edge · 本机",
+    "capabilities": [
+      "metrics"
+    ],
+    "boot_id": "boot_1e2d3c4b"
+  }
+}

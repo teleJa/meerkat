@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>欢迎使用 Meerkat</title>
+<style>
+  :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; }
+  body { margin: 0; min-height: 100vh; background: #111214; color: #f2f3f5; display: flex; padding: 24px; box-sizing: border-box; }
+  /* 用 margin:auto 而不是 place-items:center：内容比窗口高时（1366×768 笔记本、
+     系统缩放 150%）居中会让顶部溢出到屏幕外且滚不到，margin:auto 会把内容顶回可滚区。 */
+  .wrap { width: min(720px, 100%); margin: auto; }
+  .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+  .mark { width: 40px; height: 40px; border-radius: 11px; background: linear-gradient(180deg, #0f2e27, #071b18); border: 1px solid #2c3036; display: grid; place-items: center; overflow: hidden; flex: none; }
+  .mark img { width: 100%; height: 100%; display: block; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: .2px; }
+  .sub { color: #a6acb8; font-size: 13px; line-height: 1.65; margin: 10px 0 22px; }
+  .choices { display: grid; gap: 14px; }
+  @media (min-width: 680px) { .choices { grid-template-columns: 1fr 1fr; } }
+  .card {
+    background: #1b1d21; border: 1px solid #2c3036; border-radius: 16px; padding: 22px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.35); display: flex; flex-direction: column;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 8px; }
+  .card p { color: #a6acb8; font-size: 12.5px; line-height: 1.65; margin: 0 0 18px; flex: 1; }
+  .card ul { margin: 0 0 18px; padding-left: 18px; color: #8c93a1; font-size: 12px; line-height: 1.7; }
+  button { width: 100%; border: 0; border-radius: 9px; padding: 11px 14px; font-weight: 600; font-size: 13px; cursor: pointer; }
+  .primary { background: #4f8cff; color: #fff; }
+  .primary:hover { background: #6ea8fe; }
+  button:disabled { opacity: .55; cursor: default; }
+  .secondary { background: #262a31; color: #e8ebf0; border: 1px solid #343943 !important; }
+  .secondary:hover { background: #2f343c; }
+  .foot { margin-top: 18px; color: #6f7684; font-size: 11.5px; line-height: 1.6; }
+  .error { margin-top: 14px; color: #ff9ca3; font-size: 12px; white-space: pre-wrap; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <div class="mark" aria-hidden="true"><img src="/welcome-icon.png" alt="" /></div>
+    <h1>欢迎使用 Meerkat</h1>
+  </div>
+  <p class="sub">
+    第一次启动，先选择这台机器在团队里的角色。<strong>这一步只做一次</strong>，选择结果会写入本机配置，之后启动直接进入主界面。
+  </p>
+  <p class="sub" style="margin-top:-8px;color:#c8ced8">
+    <strong>不确定选哪个？</strong>已经有另一台机器在跑 Meerkat（别人给了你邀请码）→ 选左边「加入现有工作区」；你是团队里第一个开始用的人 → 选右边「创建新工作区」，之后再邀请其他人加入。
+  </p>
+
+  <div class="choices">
+    <div class="card">
+      <h2>加入现有工作区</h2>
+      <p>
+        如果你已经有另一台机器在跑 Meerkat Hub，用它的邀请码把本机接进去。本机会作为「节点」加入团队，使用对方的设备和任务视图。
+      </p>
+      <ul>
+        <li>需要 Hub 上生成的邀请码（一次性，默认 10 分钟有效）</li>
+        <li>首次加入要在浏览器完成一次 Tailscale 授权</li>
+        <li>之后自动配对，不需要命令行</li>
+      </ul>
+      <button class="primary" id="join">用邀请码加入工作区</button>
+    </div>
+
+    <div class="card">
+      <h2>创建新工作区（本机作 Hub）</h2>
+      <p>
+        这台机器作为团队的中心：本机同时运行 Hub 与自己的 Edge，其他设备通过邀请码接入。适合第一次使用、或者想新建一个团队的人。
+      </p>
+      <ul>
+        <li>本机监听 <code>127.0.0.1:8787</code> 作为 Hub</li>
+        <li>数据与配置都保存在本机，不上传</li>
+        <li>随时可以再邀请其他设备加入</li>
+      </ul>
+      <button class="secondary" id="create">创建新工作区</button>
+    </div>
+  </div>
+
+  <div class="error hidden" id="error"></div>
+  <div class="foot">
+    选错了也不要紧：之后随时可以在「设置 → 加入工作区」里重新打开加入入口。
+  </div>
+</div>
+<script>
+const join = document.getElementById("join");
+const create = document.getElementById("create");
+const error = document.getElementById("error");
+
+join.addEventListener("click", () => {
+  // 直接在同一个主窗口里进入邀请码表单（不另开窗口，也不跳出 App）。
+  window.location.href = "/setup";
+});
+
+create.addEventListener("click", async () => {
+  error.classList.add("hidden");
+  create.disabled = true;
+  create.textContent = "正在创建…";
+  try {
+    const response = await fetch("/desktop/create-workspace", { method: "POST" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error((payload && payload.error && payload.error.message) || "创建失败");
+    create.textContent = "已创建，正在启动…";
+  } catch (err) {
+    error.classList.remove("hidden");
+    error.textContent = String(err && err.message ? err.message : err);
+    create.disabled = false;
+    create.textContent = "创建新工作区";
+  }
+});
+</script>
+</body>
+</html>

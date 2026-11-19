@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>加入 Meerkat 工作区</title>
+<style>
+  :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; }
+  body { margin: 0; min-height: 100vh; background: #111214; color: #f2f3f5; display: flex; padding: 20px; box-sizing: border-box; }
+  /* margin:auto 而不是 place-items:center：托盘里那个 720×620 的窗口放不下整张卡片时，
+     居中会把顶部（含返回链接）挤出可视区且滚不到。 */
+  .card { width: min(560px, 100%); background: #1b1d21; border: 1px solid #2c3036; border-radius: 16px; padding: 28px; box-shadow: 0 20px 60px rgba(0,0,0,.35); position: relative; margin: auto; }
+  .back { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 14px; color: #8fb6ff; font-size: 12px; text-decoration: none; padding: 5px 10px; border-radius: 8px; border: 1px solid #2f3a4d; background: #171a1f; }
+  /* 必须有这条：[hidden] 的 UA 规则是 display:none，但上面 .back 的 display
+     优先级更高，会把 hidden 属性顶掉——返回链接在非首启场景下照样显示出来。 */
+  .back[hidden] { display: none; }
+  .back:hover { background: #1e232a; color: #b7d0ff; }
+  .back:focus-visible { outline: 2px solid #6ea8fe; outline-offset: 2px; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  p { color: #a6acb8; font-size: 13px; line-height: 1.6; margin: 0 0 18px; }
+  label { display: block; color: #c8ced8; font-size: 12px; margin: 14px 0 6px; }
+  input, textarea { width: 100%; box-sizing: border-box; background: #121417; color: #f2f3f5; border: 1px solid #343943; border-radius: 9px; padding: 10px 12px; font: inherit; font-size: 13px; outline: none; }
+  input:focus, textarea:focus { border-color: #6ea8fe; }
+  textarea { min-height: 84px; resize: vertical; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
+  button { margin-top: 18px; width: 100%; border: 0; border-radius: 9px; padding: 11px 14px; background: #4f8cff; color: white; font-weight: 600; font-size: 13px; cursor: pointer; }
+  button:disabled { opacity: .55; cursor: default; }
+  .hint { margin-top: 14px; color: #8c93a1; font-size: 12px; line-height: 1.5; }
+  .error { margin-top: 12px; color: #ff9ca3; font-size: 12px; white-space: pre-wrap; }
+  .ok { margin-top: 12px; color: #8ee6b0; font-size: 13px; }
+  details.hint { border-top: 1px solid #262a31; padding-top: 12px; }
+  details.hint summary { cursor: pointer; color: #b9c0cc; font-size: 12px; font-weight: 600; }
+  details.hint summary:focus-visible { outline: 2px solid #6ea8fe; outline-offset: 2px; border-radius: 4px; }
+  details.hint ol { margin: 8px 0 0; padding-left: 20px; }
+  details.hint li { margin-bottom: 4px; }
+  code { background: #121417; border: 1px solid #2c3036; border-radius: 4px; padding: 1px 5px; font-size: 11px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <a class="back" id="back" href="/welcome" hidden>← 返回，重新选择</a>
+  <h1>加入 Meerkat 工作区</h1>
+  <p>在 Hub 机器的 Meerkat「实时设备 → 接入设备」中生成邀请码（可复制文本或扫描二维码），粘贴到这里。App 会写入本机 Edge 配置，重启后先加入内嵌 Tailscale 网络、再自动完成配对。</p>
+  <form id="join-form">
+    <label for="code">邀请码</label>
+    <textarea id="code" placeholder="MEERKAT1:..." required autofocus></textarea>
+    <label for="hub">Hub 地址（可选，一般留空：邀请码已包含内嵌网络地址）</label>
+    <input id="hub" placeholder="留空即可" />
+    <button id="submit" type="submit">加入工作区</button>
+    <div id="error" class="error" hidden></div>
+    <div id="success" class="ok" hidden></div>
+  </form>
+  <div class="hint">提示：不需要安装系统 Tailscale，也不需要执行命令行。邀请码一次性有效（默认 10 分钟），包含配对令牌，请勿公开分享。</div>
+  <details class="hint">
+    <summary>没有邀请码？在 Hub 机器上这样生成</summary>
+    <ol>
+      <li>打开那台已经在跑 Meerkat 的机器（它是「Hub」）。</li>
+      <li>左侧进入「实时设备」，点右上角 <strong>接入设备</strong>。</li>
+      <li>复制出现的邀请码，或直接用手机扫二维码。</li>
+      <li>邀请码一次性有效、默认 10 分钟；过期就回去再点一次「接入设备」。</li>
+    </ol>
+    <div style="margin-top:8px">如果 Hub 提示「内嵌网络尚未就绪」，先在那台机器的「设置 → 网络」里完成一次 Tailscale 登录，再生成邀请码。</div>
+  </details>
+  <div class="hint">加入后 App 会自动打开 Tailscale 登录页：首次加入只需在浏览器完成一次授权，登录成功后会继续自动配对并进入设备界面。如果登录页没有自动弹出，主窗口会显示「打开 Edge 登录页」按钮。</div>
+</div>
+<script>
+const form = document.getElementById("join-form");
+const code = document.getElementById("code");
+const hub = document.getElementById("hub");
+const submit = document.getElementById("submit");
+const error = document.getElementById("error");
+const success = document.getElementById("success");
+const back = document.getElementById("back");
+
+// 返回链接只在「首启」场景出现：这时工程师还没选角色，回 /welcome 选
+// 「创建新工作区」是合理退路。已有 config 的老用户从托盘菜单进来时没有退路可回，
+// 显示返回会把按钮指到错误的欢迎页，所以隐藏。
+fetch("/desktop/first-run", { headers: { accept: "application/json" } })
+  .then((response) => (response.ok ? response.json() : null))
+  .then((payload) => {
+    if (payload && payload.pending) back.hidden = false;
+  })
+  .catch(() => {
+    // 端点不可用时保持隐藏：宁可没有返回链接，也不要指向一个错误的目的地。
+  });
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  error.hidden = true;
+  success.hidden = true;
+  submit.disabled = true;
+  submit.textContent = "正在加入…";
+  try {
+    const response = await fetch("/desktop/join", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code: code.value.trim(), hub_url: hub.value.trim() }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error?.message || "加入失败");
+    success.hidden = false;
+    success.textContent = "配置已保存，App 正在重启：将自动打开 Tailscale 登录页，登录完成后自动配对。";
+    submit.textContent = "已保存";
+  } catch (err) {
+    error.hidden = false;
+    error.textContent = String(err && err.message ? err.message : err);
+    submit.disabled = false;
+    submit.textContent = "加入工作区";
+  }
+});
+</script>
+</body>
+</html>

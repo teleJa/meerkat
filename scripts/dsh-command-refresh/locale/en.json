@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Meerkat command refresh",
+    "description": "Coalesces slash command catalog refreshes and reloads background catalogs when their composers reopen. Supports DeepSeek Harness 0.2.2-rc.2."
+  }
+}

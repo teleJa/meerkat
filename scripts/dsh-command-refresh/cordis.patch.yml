@@ -1,0 +1,3 @@
+- insert:
+    - id: meerkat-command-refresh
+      name: '@local/meerkat-command-refresh'
