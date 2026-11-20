@@ -1,8 +1,9 @@
 (() => {
   const script = document.currentScript;
-  const token = script.dataset.meerkatClipboard;
+  let token = script.dataset.meerkatClipboard;
+  const page = script.dataset.meerkatClipboardPage;
   script.remove();
-  if (!token || window.parent !== window.top || location.ancestorOrigins?.length !== 1 ||
+  if (!token || !page || window.parent !== window.top || location.ancestorOrigins?.length !== 1 ||
       location.ancestorOrigins[0] !== 'https://wails.localhost') return;
 
   const clipboard = navigator.clipboard;
@@ -29,9 +30,23 @@
     return new DOMException(message, 'NotAllowedError');
   }
 
+  const requestOptions = {
+    method: 'POST', mode: 'same-origin', credentials: 'omit', redirect: 'error', cache: 'no-store',
+  };
+
+  async function renew() {
+    const response = await send('/__meerkat/clipboard/renew', {
+      ...requestOptions, headers: { 'X-Meerkat-Clipboard-Page': page },
+    });
+    const next = response.headers.get('X-Meerkat-Clipboard');
+    if (response.status !== 204 || !next) return false;
+    token = next;
+    return true;
+  }
+
   function request(payload) {
     return send('/__meerkat/clipboard', {
-      method: 'POST', mode: 'same-origin', credentials: 'omit', redirect: 'error', cache: 'no-store',
+      ...requestOptions,
       headers: { 'Content-Type': 'application/json', 'X-Meerkat-Clipboard': token },
       body: JSON.stringify(payload),
     });
@@ -39,7 +54,9 @@
 
   async function writeText(text) {
     if (typeof text !== 'string') throw new TypeError('Clipboard text must be a string');
-    if (!navigator.userActivation?.isActive || performance.now() - clickAt > 5000 || document.hidden) {
+    const startedAt = clickAt;
+    const withinGesture = () => performance.now() - startedAt <= 5000 && !document.hidden;
+    if (!navigator.userActivation?.isActive || !withinGesture()) {
       throw copyFailed('复制失败，请再点一次复制');
     }
     // Consume this click for the shim, including calls that await the browser.
@@ -53,13 +70,19 @@
         // The Android WebView may refuse writes even after a trusted click.
       }
     }
+    const payload = { text };
+    if (!withinGesture()) throw copyFailed('复制失败，请再点一次复制');
     let response;
     try {
-      response = await request({ text });
+      response = await request(payload);
+      if (response.status === 403 && withinGesture()) {
+        const renewed = await renew();
+        if (renewed && withinGesture()) response = await request(payload);
+      }
     } catch {
       throw copyFailed('复制失败，请重试');
     }
-    if (response.status === 403) throw copyFailed('复制授权已过期，请重载 DSH 后再试');
+    if (response.status === 403) throw copyFailed('复制失败，请重载 DSH 后再试');
     if (response.status === 413) throw copyFailed('复制失败，内容超过 1 MB');
     if (response.status !== 204) throw copyFailed('复制失败，请重试');
   }

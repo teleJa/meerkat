@@ -126,3 +126,72 @@ func TestClipboardGrantChangesOnNavigation(t *testing.T) {
 		t.Fatal("previous page token was not replaced")
 	}
 }
+
+func TestClipboardRenewAfterIdle(t *testing.T) {
+	const host = "127.0.0.1:40997"
+	const page = "active-page"
+	const expired = "expired-token"
+	writes := 0
+	bridge := &clipboardBridge{
+		host: host, page: page, token: expired, expires: time.Now().Add(-time.Minute),
+		write: func(string) bool { writes++; return true },
+		log:   func(string, ...any) {},
+	}
+	local := bridge.proxy(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("clipboard renewal reached upstream")
+	}))
+	post := func(path, header, secret, origin, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "http://"+host+path, strings.NewReader(body))
+		r.Header.Set("Origin", origin)
+		r.Header.Set("Sec-Fetch-Site", "same-origin")
+		r.Header.Set("Sec-Fetch-Mode", "same-origin")
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set(header, secret)
+		w := httptest.NewRecorder()
+		local.ServeHTTP(w, r)
+		return w
+	}
+	origin := "http://" + host
+	if w := post(clipboardPath, clipboardTokenHeader, expired, origin, `{"text":"test"}`); w.Code != 403 {
+		t.Fatalf("expired write HTTP %d", w.Code)
+	}
+	if w := post(clipboardRenewPath, clipboardPageHeader, page, "https://other.invalid", ""); w.Code != 403 {
+		t.Fatalf("cross-origin renew HTTP %d", w.Code)
+	}
+	if w := post(clipboardRenewPath, clipboardPageHeader, expired, origin, ""); w.Code != 403 {
+		t.Fatalf("write credential could renew: HTTP %d", w.Code)
+	}
+	if w := post(clipboardRenewPath, clipboardPageHeader, page, origin, `{"text":"test"}`); w.Code != 400 {
+		t.Fatalf("renew endpoint accepted a body: HTTP %d", w.Code)
+	}
+	w := post(clipboardRenewPath, clipboardPageHeader, page, origin, "")
+	renewed := w.Header().Get(clipboardTokenHeader)
+	if w.Code != 204 || len(renewed) != 64 || renewed == expired || writes != 0 {
+		t.Fatalf("renew HTTP %d, issued=%t, writes=%d", w.Code, renewed != "", writes)
+	}
+	if w := post(clipboardRenewPath, clipboardPageHeader, page, origin, ""); w.Code != 204 || w.Header().Get(clipboardTokenHeader) != renewed {
+		t.Fatalf("duplicate renew rotated a fresh token: HTTP %d", w.Code)
+	}
+	if w := post(clipboardPath, clipboardTokenHeader, page, origin, `{"text":"test"}`); w.Code != 403 {
+		t.Fatalf("page credential allowed a write: HTTP %d", w.Code)
+	}
+	if w := post(clipboardPath, clipboardTokenHeader, renewed, origin, `{"text":"test"}`); w.Code != 204 || writes != 1 {
+		t.Fatalf("first write after idle HTTP %d, writes=%d", w.Code, writes)
+	}
+
+	navigation := httptest.NewRequest(http.MethodGet, "/harness-proxy/another-device/", nil)
+	navigation.Header.Set("Sec-Fetch-Dest", "iframe")
+	navigation.Header.Set("Sec-Fetch-Mode", "navigate")
+	navigation.Header.Set("Sec-Fetch-Site", "cross-site")
+	navigation.Header.Set("Referer", "https://wails.localhost/")
+	prepareClipboardNavigation(navigation)
+	if _, ok := bridge.inject(navigation, []byte(dshHTML())); !ok {
+		t.Fatal("new page did not get credentials")
+	}
+	if w := post(clipboardRenewPath, clipboardPageHeader, page, origin, ""); w.Code != 403 {
+		t.Fatalf("previous page renewed after navigation: HTTP %d", w.Code)
+	}
+	if w := post(clipboardPath, clipboardTokenHeader, renewed, origin, `{"text":"test"}`); w.Code != 403 || writes != 1 {
+		t.Fatalf("previous page wrote after navigation: HTTP %d, writes=%d", w.Code, writes)
+	}
+}

@@ -19,6 +19,8 @@ import (
 
 const (
 	clipboardPath          = "/__meerkat/clipboard"
+	clipboardRenewPath     = clipboardPath + "/renew"
+	clipboardPageHeader    = "X-Meerkat-Clipboard-Page"
 	clipboardTokenLifetime = 10 * time.Minute
 	clipboardTextLimit     = 1 << 20
 	clipboardTokenHeader   = "X-Meerkat-Clipboard"
@@ -57,6 +59,7 @@ type clipboardBridge struct {
 	write   func(string) bool
 	log     func(string, ...any)
 	mu      sync.Mutex
+	page    string
 	token   string
 	expires time.Time
 }
@@ -71,17 +74,19 @@ func (b *clipboardBridge) inject(r *http.Request, body []byte) ([]byte, bool) {
 	if idx < 0 {
 		return body, false
 	}
-	var random [32]byte
+	var random [64]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		b.log("copy: could not issue page authorization")
 		return body, false
 	}
-	token := hex.EncodeToString(random[:])
+	token := hex.EncodeToString(random[:32])
+	page := hex.EncodeToString(random[32:])
 	b.mu.Lock()
 	b.token = token
+	b.page = page
 	b.expires = time.Now().Add(clipboardTokenLifetime)
 	b.mu.Unlock()
-	script := `<script data-meerkat-clipboard="` + token + `">` + clipboardScript + `</script>`
+	script := `<script data-meerkat-clipboard="` + token + `" data-meerkat-clipboard-page="` + page + `">` + clipboardScript + `</script>`
 	next := make([]byte, 0, len(body)+len(script))
 	next = append(next, body[:idx]...)
 	next = append(next, script...)
@@ -90,7 +95,7 @@ func (b *clipboardBridge) inject(r *http.Request, body []byte) ([]byte, bool) {
 
 func (b *clipboardBridge) proxy(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != clipboardPath {
+		if r.URL.Path != clipboardPath && r.URL.Path != clipboardRenewPath {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -108,6 +113,10 @@ func (b *clipboardBridge) serve(w http.ResponseWriter, r *http.Request) {
 	if r.Host != b.host || r.Header.Get("Origin") != "http://"+b.host ||
 		r.Header.Get("Sec-Fetch-Site") != "same-origin" || r.Header.Get("Sec-Fetch-Mode") != "same-origin" {
 		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	if r.URL.Path == clipboardRenewPath {
+		b.renew(w, r)
 		return
 	}
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -148,5 +157,31 @@ func (b *clipboardBridge) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		b.log("copy=bridge")
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// renew issues a short-lived write token for the currently loaded document.
+// The page credential is only accepted here and cannot write the clipboard.
+func (b *clipboardBridge) renew(w http.ResponseWriter, r *http.Request) {
+	if r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.page == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get(clipboardPageHeader)), []byte(b.page)) != 1 {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	if !time.Now().Before(b.expires) {
+		var random [32]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		b.token = hex.EncodeToString(random[:])
+		b.expires = time.Now().Add(clipboardTokenLifetime)
+	}
+	w.Header().Set(clipboardTokenHeader, b.token)
 	w.WriteHeader(http.StatusNoContent)
 }
