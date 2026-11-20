@@ -105,7 +105,7 @@ func checkUpdateGuard() error {
 	return lock.Close()
 }
 
-func startWindowsUpdate(staging string) error {
+func startWindowsUpdate(staging string, finalCheck func() error) error {
 	dir, err := windowsInstalledDirectory()
 	if err != nil {
 		return err
@@ -115,6 +115,9 @@ func startWindowsUpdate(staging string) error {
 	}
 	if _, err := os.Lstat(pendingUpdatePath()); !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("上一次更新仍待恢复")
+	}
+	if err := os.Remove(filepath.Join(staging, "accepted")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	// Keep recovery executable across reboots, independent of TEMP cleanup.
 	helperPath := updateHelperPath()
@@ -184,7 +187,13 @@ func startWindowsUpdate(staging string) error {
 			<-exited
 			return fmt.Errorf("更新辅助程序接收交接超时")
 		case <-tick.C:
-			if _, err := os.Stat(filepath.Join(staging, "accepted")); err == nil {
+			marker := filepath.Join(staging, "accepted")
+			if _, err := os.Stat(marker); err == nil {
+				if err := finalCheck(); err != nil {
+					_ = cmd.Process.Kill()
+					<-exited
+					return errors.Join(err, os.Remove(marker))
+				}
 				accepted = true
 				return nil
 			}
@@ -240,10 +249,12 @@ func runUpdateHelper() (bool, error) {
 		return true, fmt.Errorf("更新包清单无效或版本未提高")
 	}
 	result := func(err error) {
-		message := "已更新到 " + manifest.Version
+		message := "已从 " + appVersion + " 更新到 " + manifest.Version
 		if err != nil {
 			message = "更新 " + manifest.Version + " 失败：" + err.Error()
-			_ = os.WriteFile(filepath.Join(updateDir(), "failed-version"), []byte(manifest.Version), 0o600)
+			if !errors.Is(err, errUpdateDirectoryBusy) {
+				_ = os.WriteFile(filepath.Join(updateDir(), "failed-version"), []byte(manifest.Version), 0o600)
+			}
 		} else {
 			_ = os.Remove(filepath.Join(updateDir(), "failed-version"))
 		}
@@ -341,6 +352,9 @@ func applyWindowsUpdate(dir, staging string, manifest update.Manifest, logger *l
 		return fmt.Errorf("旧版备份已存在：%s", backup)
 	}
 	if err := renameUpdatePath(dir, backup); err != nil {
+		if errors.Is(err, windows.ERROR_SHARING_VIOLATION) || errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+			return fmt.Errorf("%w，请在任务管理器中结束仍占用安装目录的 Meerkat 进程后重试：%w", errUpdateDirectoryBusy, err)
+		}
 		return fmt.Errorf("无法搬移旧安装目录，旧版文件保留：%w", err)
 	}
 	logger.Printf("backup created: %s", backup)
@@ -489,7 +503,7 @@ func launchDesktop(dir string, args ...string) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-func automaticUpdateReady() bool {
+func windowsInputIdle() bool {
 	if firstRunPending() {
 		// Nothing has been started in this workspace yet.
 		return true
@@ -499,5 +513,5 @@ func automaticUpdateReady() bool {
 	ok, _, _ := user.NewProc("GetLastInputInfo").Call(uintptr(unsafe.Pointer(&lastInput)))
 	kernel := windows.NewLazySystemDLL("kernel32.dll")
 	now, _, _ := kernel.NewProc("GetTickCount").Call()
-	return ok != 0 && uint32(now)-lastInput.tick >= 120_000 && noTrackedUpdateWork()
+	return ok != 0 && uint32(now)-lastInput.tick >= 120_000
 }

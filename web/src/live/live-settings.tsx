@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   Bell,
@@ -29,6 +30,7 @@ import { PageHeader } from "@/components/page-header";
 import { openExternal } from "@/lib/open-external";
 import { openJoinWorkspace } from "@/lib/open-setup";
 import { TurnNotificationsSection } from "@/live/notification-settings";
+import { focusAboutMeerkat, UpdateSettings } from "@/live/update-settings";
 import { cn } from "@/lib/utils";
 
 type TSNetStatus = {
@@ -133,12 +135,17 @@ function ReviewHTMLOpenSettings() {
 }
 
 export function LiveSettingsPage() {
+  const [searchParams] = useSearchParams();
   const [status, setStatus] = useState<TSNetStatus>(EMPTY);
   const [edgeStatus, setEdgeStatus] = useState<EdgeStatus>(EMPTY);
   const [health, setHealth] = useState<DesktopHealth | null>(null);
   const [appMode, setAppMode] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    if (searchParams.get("section") === "about") focusAboutMeerkat();
+  }, [searchParams]);
 
   const load = useCallback(async () => {
     try {
@@ -251,10 +258,11 @@ export function LiveSettingsPage() {
             { label: "网络", icon: Network, active: true },
             { label: "通知", icon: Bell, active: false },
             { label: "远程访问", icon: ShieldCheck, active: false },
-            { label: "关于", icon: Globe2, active: false },
+            { label: "关于 Meerkat", icon: Globe2, active: false, onClick: focusAboutMeerkat },
           ].map((item) => (
             <button
               key={item.label}
+              onClick={item.onClick}
               className={cn(
                 "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors",
                 item.active ? "bg-accent font-medium text-accent-foreground" : "text-muted-foreground hover:bg-accent/50",
@@ -271,6 +279,7 @@ export function LiveSettingsPage() {
         </aside>
 
         <div className="min-w-0 space-y-5">
+          <UpdateSettings />
           {health ? <ReviewHTMLOpenSettings /> : null}
           {health ? (
             <section data-testid="node-role-card" className="overflow-hidden rounded-xl border bg-card">
