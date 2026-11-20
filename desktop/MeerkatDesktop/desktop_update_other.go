@@ -29,9 +29,39 @@ func recoverInterruptedUpdate() (bool, error) { return false, nil }
 func checkUpdateGuard() error                 { return nil }
 func writeUpdateReady()                       {}
 
-func setupUpdateMenu(app *application.App, menu *application.Menu) {
-	menu.Add("检查更新").OnClick(func(*application.Context) { showUpdateCheck(app) })
-	menu.Add("安装已下载更新").OnClick(func(*application.Context) { promptInstallUpdate(app, true) })
+func currentUpdateSettings() updateSettingsState {
+	state := updateSettingsState{Version: appVersion, Mode: "manual", Phase: "idle"}
+	if strings.TrimSpace(appCfg.UpdateManifestURL) == "" {
+		state.Mode = "unconfigured"
+		state.Message = "此平台当前没有配置更新地址。"
+	}
+	if info := currentDownloadedUpdate(); info != nil {
+		state.Available, state.Installable, state.Prepared = info.Version, true, true
+		state.Phase, state.Message = "ready", "安装包已下载。请按系统提示安装。"
+	}
+	return state
+}
+
+func applyUpdateSettingsRequest(request updateSettingsRequest) error {
+	if request.Action == "status" {
+		return nil
+	}
+	if desktopApp == nil || mainWindow == nil {
+		return fmt.Errorf("Meerkat 主窗口尚未就绪")
+	}
+	switch request.Action {
+	case "check":
+		go showUpdateCheck(desktopApp)
+	case "install":
+		info := currentDownloadedUpdate()
+		if info == nil || info.Version != request.Version {
+			return fmt.Errorf("请先检查更新")
+		}
+		go promptInstallUpdate(desktopApp, true)
+	default:
+		return fmt.Errorf("未知的更新操作")
+	}
+	return nil
 }
 
 type updatePlatform struct {

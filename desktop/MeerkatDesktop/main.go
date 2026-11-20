@@ -1298,9 +1298,12 @@ func buildUIHandler(dist fs.FS, proxy http.Handler) http.Handler {
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 			return
 		}
+		if r.URL.Path == updateSettingsRoute {
+			handleUpdateSettings(w, r)
+			return
+		}
 		if r.URL.Path == "/desktop/update-check" {
-			setDesktopJSONHeader(w)
-			_ = json.NewEncoder(w).Encode(checkForUpdate())
+			http.NotFound(w, r)
 			return
 		}
 		if r.URL.Path == "/desktop/harness-html-preview" {
@@ -1596,6 +1599,7 @@ func main() {
 		Width:  defaultWindowWidth,
 		Height: defaultWindowHeight,
 		URL:    desktopWindowURL,
+		JS:     updateSettingsScript(uiURL),
 		Mac: application.MacWindow{
 			InvisibleTitleBarHeight: 40,
 			TitleBar:                application.MacTitleBarHiddenInset,
@@ -1609,6 +1613,8 @@ func main() {
 	mainWindow = window
 	if runtime.GOOS == "windows" {
 		window.OnWindowEvent(events.Windows.WebViewNavigationCompleted, func(*application.WindowEvent) {
+			// WebView2 only evaluates the initial JS option for an inline HTML window.
+			window.ExecJS(updateSettingsScript(uiURL))
 			go writeUpdateReady()
 		})
 	}
@@ -1666,7 +1672,7 @@ func main() {
 		}
 		app.Dialog.Info().SetTitle("Meerkat Desktop").SetMessage(fmt.Sprintf("版本: %s\n模式: %s\nCenter: %s (%s)\n\n本地 Edge: %s", appVersion, appCfg.Mode, centerURL(), centerStatus(), edgeStatus())).Show()
 	})
-	setupUpdateMenu(app, menu)
+	setupUpdateMenu(app, menu, window)
 	menu.AddSeparator()
 	menu.Add("退出").OnClick(func(*application.Context) {
 		cleanupChildren()

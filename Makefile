@@ -33,7 +33,7 @@ DESKTOP := $(ROOT)/desktop/MeerkatDesktop
 BUILD_WIN := $(DESKTOP)/build/windows
 WIN_DIR := $(DESKTOP)/bin/Meerkat-Windows
 VERSION ?= $(shell tr -d '[:space:]' < "$(ROOT)/VERSION")
-UPDATE_PUBLIC_KEY ?=
+UPDATE_PUBLIC_KEY ?= $(shell tr -d '[:space:]' < "$(ROOT)/scripts/release-public-key.txt")
 APP_LDFLAGS := -X main.appVersion=$(VERSION) -X main.updatePublicKey=$(UPDATE_PUBLIC_KEY)
 WIN_EXE := $(WIN_DIR)/Meerkat.exe
 WIN_EDGE := $(WIN_DIR)/meerkat-edge.exe

@@ -16,13 +16,18 @@ import (
 
 func TestHarnessPathProxyRefreshesOnlyEntranceGET(t *testing.T) {
 	var logins, version, entries atomic.Int32
-	var rejectLogin, rejectEntry atomic.Bool
+	var rejectLogin, rejectEntry, rejectBusiness atomic.Bool
+	var launchToken atomic.Value
+	launchToken.Store("launch")
+	var pauseEntry atomic.Bool
+	entryStarted := make(chan struct{})
+	resumeEntry := make(chan struct{})
 	version.Store(1)
 	rejectLogin.Store(true)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("token") == "launch" {
+		if token := r.URL.Query().Get("token"); token != "" {
 			logins.Add(1)
-			if rejectLogin.Load() {
+			if rejectLogin.Load() || token != launchToken.Load().(string) {
 				http.Error(w, dshBrowserAuthError[:len(dshBrowserAuthError)-1], http.StatusUnauthorized)
 				return
 			}
@@ -31,6 +36,14 @@ func TestHarnessPathProxyRefreshesOnlyEntranceGET(t *testing.T) {
 			return
 		}
 		entries.Add(1)
+		if pauseEntry.CompareAndSwap(true, false) {
+			close(entryStarted)
+			<-resumeEntry
+		}
+		if rejectBusiness.Load() {
+			http.Error(w, "business access denied", http.StatusUnauthorized)
+			return
+		}
 		cookie, err := r.Cookie("dsh")
 		if rejectEntry.Load() || err != nil || cookie.Value != strconv.Itoa(int(version.Load())) {
 			if r.Header.Get("Accept-Encoding") == "gzip, deflate, br" {
@@ -122,6 +135,42 @@ func TestHarnessPathProxyRefreshesOnlyEntranceGET(t *testing.T) {
 	if got.Code != http.StatusUnauthorized || got.Body.String() != dshBrowserAuthError || entries.Load()-before != 1 || logins.Load() != 5 {
 		t.Fatalf("failed refresh should preserve the initial 401: status=%d body=%q attempts=%d logins=%d", got.Code, got.Body.String(), entries.Load()-before, logins.Load())
 	}
+
+	rejectLogin.Store(false)
+	rejectEntry.Store(false)
+	check(http.MethodGet, "/", "", http.StatusOK)
+	t.Run("business 401 at the entrance does not trigger a login", func(t *testing.T) {
+		rejectBusiness.Store(true)
+		defer rejectBusiness.Store(false)
+		beforeEntries, beforeLogins := entries.Load(), logins.Load()
+		got := request(http.MethodGet, "/", "")
+		if got.Code != http.StatusUnauthorized || got.Body.String() != "business access denied\n" || entries.Load()-beforeEntries != 1 || logins.Load() != beforeLogins {
+			t.Fatalf("business 401 was changed or replayed: status=%d body=%q attempts=%d logins=%d", got.Code, got.Body.String(), entries.Load()-beforeEntries, logins.Load()-beforeLogins)
+		}
+	})
+	t.Run("refresh uses the current launch URL", func(t *testing.T) {
+		beforeEntries, beforeLogins := entries.Load(), logins.Load()
+		result := make(chan *httptest.ResponseRecorder, 1)
+		pauseEntry.Store(true)
+		go func() { result <- request(http.MethodGet, "/", "") }()
+		select {
+		case <-entryStarted:
+		case <-time.After(5 * time.Second):
+			close(resumeEntry)
+			t.Fatal("entrance request did not reach the upstream")
+		}
+		launchToken.Store("replacement")
+		version.Store(3)
+		err := h.setHarnessURL(device.Device.ID, upstream.URL+"/?token=replacement", time.Now())
+		close(resumeEntry)
+		got := <-result
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Code != http.StatusOK || got.Body.String() != "authenticated" || entries.Load()-beforeEntries != 2 || logins.Load()-beforeLogins != 1 {
+			t.Fatalf("expected a single refresh using the new launch URL: status=%d body=%q attempts=%d logins=%d", got.Code, got.Body.String(), entries.Load()-beforeEntries, logins.Load()-beforeLogins)
+		}
+	})
 }
 
 func TestHarnessPathProxyReusesConnectionsWithoutSharingCookies(t *testing.T) {

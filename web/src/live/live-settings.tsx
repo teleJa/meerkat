@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   Bell,
@@ -16,7 +17,6 @@ import {
   QrCode as QrCodeIcon,
   RefreshCw,
   Server,
-  Settings,
   ShieldCheck,
   Smartphone,
   Trash2,
@@ -29,6 +29,7 @@ import { PageHeader } from "@/components/page-header";
 import { openExternal } from "@/lib/open-external";
 import { openJoinWorkspace } from "@/lib/open-setup";
 import { TurnNotificationsSection } from "@/live/notification-settings";
+import { focusAboutMeerkat, UpdateSettings } from "@/live/update-settings";
 import { cn } from "@/lib/utils";
 
 type TSNetStatus = {
@@ -132,13 +133,40 @@ function ReviewHTMLOpenSettings() {
   );
 }
 
+const settingsSections = [
+  { id: "network", label: "网络", icon: Network },
+  { id: "notifications", label: "通知", icon: Bell },
+  { id: "about", label: "关于 Meerkat", icon: Globe2 },
+] as const;
+
+type SettingsSection = typeof settingsSections[number]["id"];
+
+function focusSettingsSection(section: SettingsSection) {
+  if (section === "about") {
+    focusAboutMeerkat();
+    return;
+  }
+  const target = document.getElementById("settings-" + section);
+  target?.focus({ preventScroll: true });
+  target?.scrollIntoView({ block: "start" });
+}
+
 export function LiveSettingsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedSection = searchParams.get("section");
+  const selectedSection = settingsSections.find(section => section.id === requestedSection);
+  const currentSection = selectedSection?.id ?? "about";
   const [status, setStatus] = useState<TSNetStatus>(EMPTY);
   const [edgeStatus, setEdgeStatus] = useState<EdgeStatus>(EMPTY);
   const [health, setHealth] = useState<DesktopHealth | null>(null);
   const [appMode, setAppMode] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    // The tray changes the open query parameter to refocus the same section.
+    if (selectedSection) focusSettingsSection(selectedSection.id);
+  }, [searchParams, selectedSection]);
 
   const load = useCallback(async () => {
     try {
@@ -245,32 +273,33 @@ export function LiveSettingsPage() {
       />
 
       <div className="grid gap-5 lg:grid-cols-[210px_minmax(0,1fr)]">
-        <aside className="h-fit rounded-xl border bg-card p-2">
-          {[
-            { label: "通用", icon: Settings, active: false },
-            { label: "网络", icon: Network, active: true },
-            { label: "通知", icon: Bell, active: false },
-            { label: "远程访问", icon: ShieldCheck, active: false },
-            { label: "关于", icon: Globe2, active: false },
-          ].map((item) => (
+        <nav aria-label="设置分区" className="h-fit rounded-xl border bg-card p-2 lg:sticky lg:top-20">
+          {settingsSections.map(({ id, label, icon: Icon }) => (
             <button
-              key={item.label}
+              key={id}
+              type="button"
+              aria-current={id === currentSection ? "location" : undefined}
+              onClick={() => {
+                if (requestedSection === id) focusSettingsSection(id);
+                else setSearchParams({ section: id });
+              }}
               className={cn(
                 "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors",
-                item.active ? "bg-accent font-medium text-accent-foreground" : "text-muted-foreground hover:bg-accent/50",
+                id === currentSection ? "bg-accent font-medium text-accent-foreground" : "text-muted-foreground hover:bg-accent/50",
               )}
             >
-              <item.icon className="size-4" />
-              {item.label}
-              {item.active ? <span className="ml-auto size-1.5 rounded-full bg-emerald-500" /> : null}
+              <Icon className="size-4" />
+              {label}
+              {id === currentSection ? <span className="ml-auto size-1.5 rounded-full bg-emerald-500" /> : null}
             </button>
           ))}
           <div className="mt-2 rounded-lg bg-muted/50 px-3 py-2 text-[10px] leading-relaxed text-muted-foreground">
             设置页展示当前 Meerkat App 的网络与连接状态；不同模式的可用操作不同。
           </div>
-        </aside>
+        </nav>
 
         <div className="min-w-0 space-y-5">
+          <UpdateSettings />
           {health ? <ReviewHTMLOpenSettings /> : null}
           {health ? (
             <section data-testid="node-role-card" className="overflow-hidden rounded-xl border bg-card">
@@ -506,9 +535,11 @@ export function LiveSettingsPage() {
           </section>
 
           <MobileDevicesSection />
-          <TurnNotificationsSection />
+          <div id="settings-notifications" tabIndex={-1} className="scroll-mt-20">
+            <TurnNotificationsSection />
+          </div>
 
-          <section className="rounded-xl border bg-card p-5">
+          <section id="settings-network" tabIndex={-1} className="scroll-mt-20 rounded-xl border bg-card p-5">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-semibold">连接拓扑</h2>

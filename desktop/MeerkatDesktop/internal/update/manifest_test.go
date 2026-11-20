@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -23,12 +25,18 @@ func TestSignedUpdateDownload(t *testing.T) {
 	var downloads atomic.Int32
 	var envelope []byte
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/latest.json" {
+		switch r.URL.Path {
+		case "/latest.json":
 			_, _ = w.Write(envelope)
-			return
+		case "/unavailable/latest.json":
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		case "/truncated/setup.exe":
+			w.Header().Set("Content-Length", "64")
+			_, _ = w.Write(installer)
+		default:
+			downloads.Add(1)
+			_, _ = w.Write(installer)
 		}
-		downloads.Add(1)
-		_, _ = w.Write(installer)
 	}))
 	server.Start()
 	defer server.Close()
@@ -85,6 +93,40 @@ func TestSignedUpdateDownload(t *testing.T) {
 		entries, err := os.ReadDir(dir)
 		if err != nil || len(entries) != 0 {
 			t.Fatalf("rejected package left files: %v, %v", entries, err)
+		}
+	})
+	t.Run("tampered signed payload rejected", func(t *testing.T) {
+		tampered := []byte(`{"version":"1.2.0","platforms":{}}`)
+		data, err := json.Marshal(Envelope{Manifest: tampered, Signature: signature})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = Parse(data, public); err == nil || err.Error() != "更新清单签名验证失败" {
+			t.Fatalf("expected a signature error, got %v", err)
+		}
+	})
+	t.Run("missing platform rejected", func(t *testing.T) {
+		if _, err := manifest.Package("windows", "arm64"); err == nil || err.Error() != "更新清单没有当前平台的安装包" {
+			t.Fatalf("expected a missing-platform error, got %v", err)
+		}
+	})
+	t.Run("manifest HTTP failure surfaced", func(t *testing.T) {
+		if _, _, err := Fetch(server.URL+"/unavailable/latest.json", public); err == nil || err.Error() != "更新服务返回 HTTP 503" {
+			t.Fatalf("expected HTTP 503, got %v", err)
+		}
+	})
+	t.Run("interrupted download removes partial file", func(t *testing.T) {
+		dir := t.TempDir()
+		truncated := platform
+		truncated.URL = server.URL + "/truncated/setup.exe"
+		var downloaded int64
+		err := Download(truncated, dir, func(written, _ int64) { downloaded = written })
+		if !errors.Is(err, io.ErrUnexpectedEOF) || downloaded != int64(len(installer)) {
+			t.Fatalf("expected an interrupted partial download, downloaded=%d error=%v", downloaded, err)
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("interrupted download left files: %v, %v", entries, err)
 		}
 	})
 	t.Run("missing digest and cleartext remote rejected", func(t *testing.T) {
