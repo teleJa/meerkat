@@ -47,7 +47,7 @@ func setupUpdateMenu(app *application.App, menu *application.Menu, window *appli
 			app.Dialog.Info().AttachToWindow(window).SetTitle("关于 Meerkat").SetMessage("当前版本 " + appVersion + "。完成工作区设置后可管理更新。").Show()
 			return
 		}
-		window.ExecJS(`window.location.hash = "#/live/settings?section=about"`)
+		window.ExecJS(`window.location.hash = "#/live/settings?section=about&open=" + Date.now()`)
 	})
 }
 

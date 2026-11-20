@@ -365,7 +365,11 @@ func runManualWindowsUpdate(version string, blocker *updateBlockedProcess) {
 	}
 	if blocker != nil {
 		if err := endUpdateBlockedProcess(*blocker); err != nil {
-			setUpdateBlocker(blocker, "未能结束该进程，请在任务管理器结束后点重试。")
+			if errors.Is(err, errUpdateProcessExited) {
+				setUpdatePhase("blocked", err.Error())
+			} else {
+				setUpdateBlocker(blocker, "未能结束该进程，请在任务管理器结束后点重试。")
+			}
 			return
 		}
 	}

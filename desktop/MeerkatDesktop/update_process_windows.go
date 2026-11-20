@@ -12,6 +12,7 @@ import (
 )
 
 var errUpdateDirectoryBusy = errors.New("安装目录仍被占用，旧版已保留")
+var errUpdateProcessExited = errors.New("Windows 尚未释放已退出的进程。请在安装目录解除占用后重试。")
 
 func findUpdateBlockedProcess() (*updateBlockedProcess, error) {
 	dir, err := windowsInstalledDirectory()
@@ -96,7 +97,7 @@ func endUpdateBlockedProcess(expected updateBlockedProcess) error {
 		return errors.New("进程已经变化，请重新检查")
 	}
 	if state, err := windows.WaitForSingleObject(handle, 0); err == nil && state == windows.WAIT_OBJECT_0 {
-		return errors.New("进程已退出，但 Windows 尚未释放它")
+		return errUpdateProcessExited
 	}
 	if err := windows.TerminateProcess(handle, 1); err != nil {
 		return err
