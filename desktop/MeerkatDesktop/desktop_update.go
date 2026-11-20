@@ -134,9 +134,7 @@ func startUpdateLoop(app *application.App) {
 		time.Sleep(30 * time.Second)
 		for {
 			if automaticUpdates.Load() {
-				if runDesktopUpdate(app, false) {
-					return
-				}
+				runDesktopUpdate(app, false)
 			}
 			time.Sleep(6 * time.Hour)
 		}
@@ -145,10 +143,9 @@ func startUpdateLoop(app *application.App) {
 
 func setUpdateText(message string) { updateText.Store(message) }
 
-// runDesktopUpdate returns true once the installer is waiting for this app to quit.
-func runDesktopUpdate(app *application.App, manual bool) bool {
+func runDesktopUpdate(app *application.App, manual bool) {
 	if !updateMu.TryLock() {
-		return false
+		return
 	}
 	defer updateMu.Unlock()
 	status := func(message string) {
@@ -162,33 +159,33 @@ func runDesktopUpdate(app *application.App, manual bool) bool {
 	manifestData, manifest, err := update.Fetch(appCfg.UpdateManifestURL, updateKey())
 	if err != nil {
 		status("检查失败：" + err.Error())
-		return false
+		return
 	}
 	if !update.Newer(manifest.Version, appVersion) {
 		status("当前已是最新版本 " + appVersion)
-		return false
+		return
 	}
 	platform, err := manifest.Package(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		status(err.Error())
-		return false
+		return
 	}
 	if _, err := windowsInstalledDirectory(); err != nil {
 		status(fmt.Sprintf("发现新版 %s。当前安装无法自动替换，请使用正式安装包。", manifest.Version))
-		return false
+		return
 	}
 	if !manual && failedUpdateVersion() == manifest.Version {
 		status("上次升级失败并回退，等待手动检查后重试。")
-		return false
+		return
 	}
 	if err := os.MkdirAll(updateDir(), 0o700); err != nil {
 		status(err.Error())
-		return false
+		return
 	}
 	staging, err := os.MkdirTemp(updateDir(), "download-")
 	if err != nil {
 		status(err.Error())
-		return false
+		return
 	}
 	handoff := false
 	defer func() {
@@ -206,11 +203,11 @@ func runDesktopUpdate(app *application.App, manual bool) bool {
 	})
 	if err != nil {
 		status("下载失败：" + err.Error())
-		return false
+		return
 	}
 	if err := os.WriteFile(filepath.Join(staging, "latest.json"), manifestData, 0o600); err != nil {
 		status(err.Error())
-		return false
+		return
 	}
 	if !manual {
 		setUpdateText("已下载 " + manifest.Version + "，等待空闲后更新")
@@ -219,20 +216,22 @@ func runDesktopUpdate(app *application.App, manual bool) bool {
 		}
 		if !automaticUpdates.Load() {
 			setUpdateText("自动更新已关闭")
-			return false
+			return
 		}
 	} else if !noTrackedUpdateWork() {
 		status("任务仍在运行或状态未知，请完成手头任务后再检查更新。")
-		return false
+		return
 	}
 	if err := startWindowsUpdate(staging); err != nil {
 		status("无法启动安装：" + err.Error())
-		return false
+		return
 	}
 	handoff = true
 	setUpdateText("正在退出并安装 " + manifest.Version)
-	app.Quit()
-	return true
+	// Use the same shutdown sequence as an in-app restart. Waiting for the
+	// Wails WebView teardown can strand an accepted Windows update.
+	cleanupChildren()
+	os.Exit(0)
 }
 
 func failedUpdateVersion() string {
