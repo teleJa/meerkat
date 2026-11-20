@@ -1,8 +1,12 @@
 import { expect, test } from "@playwright/test";
 
-test("settings navigation selects and focuses each section", async ({ page }) => {
-  await page.goto("/#/live/settings");
+test("settings navigation has three working entries that focus and reveal their targets", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.goto("/#/live/settings?section=about");
   const navigation = page.getByRole("navigation", { name: "设置分区" });
+  await expect(navigation.getByRole("button")).toHaveCount(3);
+  // Start with the first target offscreen so focusing without scrolling fails.
+  await expect(page.locator("#settings-network")).not.toBeInViewport();
   for (const [label, section, target] of [
     ["网络", "network", "settings-network"],
     ["通知", "notifications", "settings-notifications"],
@@ -12,7 +16,9 @@ test("settings navigation selects and focuses each section", async ({ page }) =>
     await button.click();
     await expect(page).toHaveURL(new RegExp(`#/live/settings\\?section=${section}$`));
     await expect(button).toHaveAttribute("aria-current", "location");
-    await expect(page.locator(`#${target}`)).toBeFocused();
+    const destination = page.locator(`#${target}`);
+    await expect(destination).toBeFocused();
+    await expect(destination).toBeInViewport();
   }
   await expect(navigation.locator('[aria-current="location"]')).toHaveCount(1);
 });
