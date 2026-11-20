@@ -2,13 +2,14 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(cd ../.. && pwd)"
+VERSION="${VERSION:-$(tr -d '[:space:]' < "$ROOT/VERSION")}"
 
 # Web UI
 mkdir -p frontend/dist
 cp "$ROOT/web/dist/index.html" frontend/dist/index.html
 
 # App binary (includes Go Hub + embedded UI)
-go build -tags production -o bin/meerkatdesktop .
+go build -tags production -ldflags "-X main.appVersion=$VERSION -X main.updatePublicKey=${UPDATE_PUBLIC_KEY:-}" -o bin/meerkatdesktop .
 
 # App bundle: no Node runtime, no bundled Node Center.
 rm -rf bin/Meerkat.app
@@ -19,8 +20,8 @@ plutil -replace CFBundleExecutable -string meerkatdesktop bin/Meerkat.app/Conten
 plutil -replace CFBundleName -string Meerkat bin/Meerkat.app/Contents/Info.plist
 plutil -replace CFBundleDisplayName -string Meerkat bin/Meerkat.app/Contents/Info.plist
 plutil -replace CFBundleIdentifier -string com.meerkat.desktop bin/Meerkat.app/Contents/Info.plist
-plutil -replace CFBundleShortVersionString -string 0.1.0 bin/Meerkat.app/Contents/Info.plist
-plutil -replace CFBundleVersion -string 0.1.0 bin/Meerkat.app/Contents/Info.plist
+plutil -replace CFBundleShortVersionString -string "$VERSION" bin/Meerkat.app/Contents/Info.plist
+plutil -replace CFBundleVersion -string "$VERSION" bin/Meerkat.app/Contents/Info.plist
 plutil -remove LSUIElement bin/Meerkat.app/Contents/Info.plist >/dev/null 2>&1 || true
 plutil -remove CFBundleIconName bin/Meerkat.app/Contents/Info.plist >/dev/null 2>&1 || true
 cp build/darwin/icons.icns bin/Meerkat.app/Contents/Resources/icons.icns

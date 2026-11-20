@@ -6,6 +6,7 @@ require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/wailsapp/wails/v3 v3.0.0
 	golang.org/x/net v0.60.0
+	golang.org/x/mod v0.41.0
 	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.44.3
 	tailscale.com v1.104.5

@@ -1,9 +1,12 @@
 Unicode true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
+!include "FileFunc.nsh"
 
 !define APP_NAME "Meerkat"
-!define APP_VERSION "0.1.0"
+!ifndef APP_VERSION
+  !error "APP_VERSION must be supplied by the build"
+!endif
 !define APP_EXE "Meerkat.exe"
 !define COMPANY "Meerkat"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Meerkat"
@@ -44,13 +47,24 @@ VIAddVersionKey "LegalCopyright" "© 2026 Meerkat"
 
 Section "Meerkat" SecMain
   SetShellVarContext current
-  ; 升级安装时结束旧进程，避免文件占用。
-  nsExec::ExecToLog 'taskkill /IM "${APP_EXE}" /F /T'
-  Sleep 800
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/UPDATE" $R1
+  ${IfNot} ${Errors}
+    StrCpy $R2 "1"
+    ; The updater waits for the old Meerkat and Edge before moving their files.
+    IfFileExists "$INSTDIR\${APP_EXE}" update_failed
+  ${Else}
+    StrCpy $R2 "0"
+  ${EndIf}
+  ClearErrors
   SetOutPath "$INSTDIR"
   File "..\..\bin\Meerkat-Windows\${APP_EXE}"
   File "..\..\bin\Meerkat-Windows\meerkat-edge.exe"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
+  IfErrors update_failed
+  ; The helper updates DisplayVersion only after the new app reports ready.
+  StrCmp $R2 "1" update_done
 
   CreateShortcut "$SMPROGRAMS\Meerkat.lnk" "$INSTDIR\${APP_EXE}"
   CreateShortcut "$DESKTOP\Meerkat.lnk" "$INSTDIR\${APP_EXE}"
@@ -68,6 +82,15 @@ Section "Meerkat" SecMain
   WriteRegStr HKCU "${UNINST_KEY}" "QuietUninstallString" '"$INSTDIR\Uninstall.exe" /S'
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
+  IfErrors update_failed
+
+update_done:
+  SetErrorLevel 0
+  Goto update_end
+update_failed:
+  SetErrorLevel 2
+  Abort "Meerkat 安装失败，请检查安装目录是否被占用。"
+update_end:
 SectionEnd
 
 Section "Uninstall"
