@@ -36,10 +36,20 @@ if (!filename) throw new Error('Set MEERKAT_RELEASE_SIGNING_KEY_FILE to the Ed25
 const privateKey = createPrivateKey(readFileSync(filename));
 if (privateKey.asymmetricKeyType !== 'ed25519') throw new Error('The release signing key must be Ed25519.');
 
-if (action === 'public-key') {
+if (action === 'public-key' || action === 'publish') {
   const publicKey = createPublicKey(privateKey).export({ format: 'jwk' });
-  console.log(Buffer.from(publicKey.x, 'base64url').toString('hex'));
-} else if (action === 'manifest' || action === 'publish') {
+  const actualKey = Buffer.from(publicKey.x, 'base64url').toString('hex');
+  const expectedKey = readFileSync(join(sourceDir, 'scripts', 'release-public-key.txt'), 'utf8').trim();
+  if (actualKey !== expectedKey) {
+    throw new Error('The signing key does not match the published update verification key.');
+  }
+  if (action === 'public-key') {
+    console.log(actualKey);
+    process.exit(0);
+  }
+}
+
+if (action === 'manifest' || action === 'publish') {
   if (!stableVersion.test(version) || !installer) {
     throw new Error('Expected a stable version and an installer path.');
   }
@@ -57,8 +67,7 @@ if (action === 'public-key') {
   if (Buffer.byteLength(envelope) > 64 * 1024) throw new Error('Update manifest exceeds the client size limit.');
   writeFileSync(output, envelope);
   if (action === 'publish') {
-    // Publish an already-tagged source revision. Never tag the public default
-    // branch implicitly from this separate development repository.
+    // Publish the verified source tag rather than letting GitHub create it.
     const published = spawnSync('gh', ['release', 'create', tag, installer, output, '--repo', repository, '--verify-tag', '--latest', '--title', `Meerkat ${tag}`, '--notes', notes], { stdio: 'inherit' });
     if (published.error) throw published.error;
     process.exitCode = published.status ?? 1;
