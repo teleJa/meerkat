@@ -164,8 +164,9 @@ export function LiveSettingsPage() {
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
+    // The tray changes the open query parameter to refocus the same section.
     if (selectedSection) focusSettingsSection(selectedSection.id);
-  }, [selectedSection]);
+  }, [searchParams, selectedSection]);
 
   const load = useCallback(async () => {
     try {
