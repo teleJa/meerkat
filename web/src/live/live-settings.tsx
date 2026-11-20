@@ -135,7 +135,8 @@ function ReviewHTMLOpenSettings() {
 }
 
 export function LiveSettingsPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentSection = searchParams.get("section") === "network" ? "network" : "about";
   const [status, setStatus] = useState<TSNetStatus>(EMPTY);
   const [edgeStatus, setEdgeStatus] = useState<EdgeStatus>(EMPTY);
   const [health, setHealth] = useState<DesktopHealth | null>(null);
@@ -145,6 +146,9 @@ export function LiveSettingsPage() {
 
   useEffect(() => {
     if (searchParams.get("section") === "about") focusAboutMeerkat();
+    if (searchParams.get("section") === "network") {
+      document.getElementById("settings-network")?.scrollIntoView({ block: "start" });
+    }
   }, [searchParams]);
 
   const load = useCallback(async () => {
@@ -255,13 +259,18 @@ export function LiveSettingsPage() {
         <aside className="h-fit rounded-xl border bg-card p-2">
           {[
             { label: "通用", icon: Settings, active: false },
-            { label: "网络", icon: Network, active: true },
+            { label: "网络", icon: Network, active: currentSection === "network", onClick: () => setSearchParams({ section: "network" }) },
             { label: "通知", icon: Bell, active: false },
             { label: "远程访问", icon: ShieldCheck, active: false },
-            { label: "关于 Meerkat", icon: Globe2, active: false, onClick: focusAboutMeerkat },
+            { label: "关于 Meerkat", icon: Globe2, active: currentSection === "about", onClick: () => {
+              if (searchParams.get("section") === "about") focusAboutMeerkat();
+              else setSearchParams({ section: "about" });
+            } },
           ].map((item) => (
             <button
               key={item.label}
+              type="button"
+              aria-current={item.active ? "location" : undefined}
               onClick={item.onClick}
               className={cn(
                 "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors",
@@ -517,7 +526,7 @@ export function LiveSettingsPage() {
           <MobileDevicesSection />
           <TurnNotificationsSection />
 
-          <section className="rounded-xl border bg-card p-5">
+          <section id="settings-network" className="scroll-mt-20 rounded-xl border bg-card p-5">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-semibold">连接拓扑</h2>

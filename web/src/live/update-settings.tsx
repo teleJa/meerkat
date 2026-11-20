@@ -73,7 +73,10 @@ export function UpdateSettings() {
   const versionToInstall = state?.mode !== "unconfigured"
     ? (state?.installable && state.available) || state?.failed_version
     : undefined;
-  const checkLabel = state?.phase === "error" && state.check_result?.startsWith("检查失败：") ? "重试检查" : "检查更新";
+  const checkResult = state?.check_result;
+  const checkFailed = checkResult?.startsWith("检查失败：");
+  const updateServiceUnavailable = /^检查失败：更新服务返回 HTTP 5\d\d$/.test(checkResult ?? "");
+  const checkLabel = checkFailed ? "重试检查" : "检查更新";
   const retry = !!state?.failed_version || state?.phase === "blocked" || state?.phase === "error";
   const installingText = state?.mode === "manual" ? "打开安装包" : retry ? "重试更新" : "立即更新";
   const lastCheck = state?.last_check && new Date(state.last_check).toLocaleString("zh-CN", { dateStyle: "short", timeStyle: "short" });
@@ -121,7 +124,17 @@ export function UpdateSettings() {
               <dt className="text-muted-foreground">上次检查</dt>
               <dd>{lastCheck ? <time dateTime={state.last_check}>{lastCheck}</time> : "尚未检查"}</dd>
               <dt className="text-muted-foreground">检查结果</dt>
-              <dd role="status" className="break-words">{state.check_result ?? "—"}</dd>
+              <dd className="break-words">
+                <span role="status">{updateServiceUnavailable
+                  ? state.automatic ? "更新服务暂时不可用。Meerkat 会稍后自动重试，你也可以现在重试。" : "更新服务暂时不可用，请稍后重试。"
+                  : checkResult ?? "—"}</span>
+                {updateServiceUnavailable ? (
+                  <details className="mt-1 text-xs text-muted-foreground">
+                    <summary className="cursor-pointer">技术详情</summary>
+                    <p className="mt-1">{checkResult}</p>
+                  </details>
+                ) : null}
+              </dd>
             </> : null}
             {state.last_install ? <>
               <dt className="text-muted-foreground">上次安装</dt>
