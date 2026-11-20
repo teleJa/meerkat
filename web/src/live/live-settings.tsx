@@ -272,7 +272,7 @@ export function LiveSettingsPage() {
       />
 
       <div className="grid gap-5 lg:grid-cols-[210px_minmax(0,1fr)]">
-        <nav aria-label="设置分区" className="h-fit rounded-xl border bg-card p-2 lg:sticky lg:top-0">
+        <nav aria-label="设置分区" className="h-fit rounded-xl border bg-card p-2 lg:sticky lg:top-20">
           {settingsSections.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
