@@ -121,27 +121,23 @@ func (h *Hub) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	if limit > 500 {
 		limit = 500
 	}
-	tasks, err := h.listTasks(500)
+	status := r.URL.Query().Get("status")
+	deviceID := r.URL.Query().Get("device_id")
+	activeOnly := r.URL.Query().Get("active") == "1"
+	tasks, err := h.listTasks(limit, status, deviceID, activeOnly)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "中心内部错误")
 		return
 	}
-	status := r.URL.Query().Get("status")
-	deviceID := r.URL.Query().Get("device_id")
-	out := make([]map[string]any, 0)
+	out := make([]map[string]any, 0, len(tasks))
 	for _, task := range tasks {
-		if status != "" && task.Status != status {
-			continue
-		}
-		if deviceID != "" && task.DeviceID != deviceID {
-			continue
-		}
-		if len(out) >= limit {
-			break
-		}
 		out = append(out, taskToDTO(task))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"tasks": out})
+	response := map[string]any{"tasks": out}
+	if activeOnly {
+		response["active_filter_applied"] = true
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *Hub) handleTaskDetail(w http.ResponseWriter, r *http.Request) {

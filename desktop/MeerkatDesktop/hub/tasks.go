@@ -69,8 +69,11 @@ func (h *Hub) listSessions(limit int) ([]SessionRow, error) {
 	return sessions, rows.Err()
 }
 
-func (h *Hub) listTasks(limit int) ([]TaskRow, error) {
-	rows, err := h.db.Query("SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", limit)
+func (h *Hub) listTasks(limit int, status, deviceID string, activeOnly bool) ([]TaskRow, error) {
+	rows, err := h.db.Query(`SELECT * FROM tasks
+		WHERE (? = '' OR status = ?) AND (? = '' OR device_id = ?)
+		AND (NOT ? OR status IN ('queued', 'running', 'cancel_requested'))
+		ORDER BY created_at DESC LIMIT ?`, status, status, deviceID, deviceID, activeOnly, limit)
 	if err != nil {
 		return nil, err
 	}

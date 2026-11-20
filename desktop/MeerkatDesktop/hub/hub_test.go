@@ -90,6 +90,38 @@ func TestPairingRegisterAndTaskLifecycle(t *testing.T) {
 	}
 }
 
+func TestActiveTaskFilterIncludesOlderTasks(t *testing.T) {
+	h := testHub(t)
+	_, err := h.db.Exec(`WITH RECURSIVE numbers(n) AS (
+		SELECT 0 UNION ALL SELECT n + 1 FROM numbers WHERE n < 502
+	)
+	INSERT INTO tasks (id, title, source, device_id, status, cwd, request, created_at, updated_at)
+	SELECT CAST(n AS TEXT), '', 'managed', 'dev',
+		CASE n WHEN 0 THEN 'queued' WHEN 1 THEN 'running' WHEN 2 THEN 'cancel_requested' ELSE 'succeeded' END,
+		'', '', printf('%04d', n), printf('%04d', n) FROM numbers`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/tasks?active=1&limit=3", nil)
+	request.Header.Set("Authorization", "Bearer "+h.AdminToken())
+	mux := http.NewServeMux()
+	h.registerHTTP(mux)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	var result struct {
+		Tasks               []TaskRow `json:"tasks"`
+		ActiveFilterApplied bool      `json:"active_filter_applied"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || response.Code != http.StatusOK || !result.ActiveFilterApplied || len(result.Tasks) != 3 {
+		t.Fatalf("expected all active tasks, response %d: %s", response.Code, response.Body.String())
+	}
+	for i, want := range []string{"cancel_requested", "running", "queued"} {
+		if result.Tasks[i].Status != want {
+			t.Fatalf("task %d: got %q, want %q", i, result.Tasks[i].Status, want)
+		}
+	}
+}
+
 func (h *Hub) mustTask(t *testing.T, id string) *TaskRow {
 	t.Helper()
 	task, err := h.getTask(id)
