@@ -62,25 +62,26 @@ type State struct {
 
 // Client owns the process-wide tsnet node and the loopback proxy.
 type Client struct {
-	dataDir     string
-	mu          sync.Mutex
-	cfgMu       sync.RWMutex
-	cfg         Config
-	auth        Auth
-	authErr     error
-	authFailure string
-	store       SecureStore
-	server      *tsnet.Server
-	state       State
-	dshVersion  string
-	dshCommit   string
-	logPath     string
-	logFile     *os.File
+	dataDir        string
+	mu             sync.Mutex
+	cfgMu          sync.RWMutex
+	cfg            Config
+	auth           Auth
+	authErr        error
+	authFailure    string
+	store          SecureStore
+	server         *tsnet.Server
+	state          State
+	dshVersion     string
+	dshCommit      string
+	logPath        string
+	logFile        *os.File
+	writeClipboard func(string) bool
 }
 
 // New creates the client. tsnet identity is persisted under
 // <dataDir>/tsnet, so a second launch reuses the same node.
-func New(dataDir string, store SecureStore) (*Client, error) {
+func New(dataDir string, store SecureStore, writeClipboard func(string) bool) (*Client, error) {
 	if strings.TrimSpace(dataDir) == "" {
 		return nil, fmt.Errorf("app private storage path is empty")
 	}
@@ -95,13 +96,14 @@ func New(dataDir string, store SecureStore) (*Client, error) {
 	cfg, cfgErr := LoadConfig(dataDir)
 	auth, cfg, authErr := loadOrMigrateAuth(dataDir, cfg, store)
 	c := &Client{
-		dataDir: dataDir,
-		cfg:     cfg,
-		auth:    auth,
-		authErr: authErr,
-		store:   store,
-		logPath: logPath,
-		logFile: logFile,
+		dataDir:        dataDir,
+		cfg:            cfg,
+		auth:           auth,
+		authErr:        authErr,
+		store:          store,
+		logPath:        logPath,
+		logFile:        logFile,
+		writeClipboard: writeClipboard,
 		state: State{
 			State:      "starting",
 			HubAddr:    hostFromURL(cfg.HubURL),
@@ -349,6 +351,7 @@ func (c *Client) startProxy() {
 		c.setError(fmt.Errorf("invalid hub url %q", hubURL))
 		return
 	}
+	clipboard := &clipboardBridge{host: listener.Addr().String(), write: c.writeClipboard, log: c.Logf}
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	transport := &http.Transport{
 		Proxy: nil,
@@ -373,6 +376,7 @@ func (c *Client) startProxy() {
 		// 之前这里是无条件 Del，导致整条链路裸传——实测 12.8 MB 一个字节都
 		// 没压缩，loadEvent 11.96 s；同样的资源走 gzip 是 3x 小、2.8x 快。
 		injectEntry := isEntryNavigation(req)
+		prepareClipboardNavigation(req)
 		originalDirector(req)
 		if injectEntry {
 			req.Header.Del("Accept-Encoding")
@@ -415,6 +419,13 @@ func (c *Client) startProxy() {
 			c.Logf("dsh inject: 响应带 CSP，内联脚本可能被拦 path=%s policy=%q", resp.Request.URL.Path, policy)
 		}
 		result := InjectDSHMobileHTML(body)
+		if result.Injected && resp.StatusCode == http.StatusOK {
+			var clipboardInjected bool
+			result.Body, clipboardInjected = clipboard.inject(resp.Request, result.Body)
+			if clipboardInjected {
+				resp.Header.Set("Cache-Control", "no-store")
+			}
+		}
 		if !result.Injected {
 			resp.Body = io.NopCloser(bytes.NewReader(body))
 			resp.ContentLength = int64(len(body))
@@ -431,7 +442,9 @@ func (c *Client) startProxy() {
 		// 长度头必须一起改，否则 WebView 会按压缩长度截断。
 		resp.Header.Del("Content-Encoding")
 		resp.Header.Set("Content-Length", strconv.Itoa(len(result.Body)))
-		resp.Header.Set("Cache-Control", "no-cache")
+		if resp.Header.Get("Cache-Control") != "no-store" {
+			resp.Header.Set("Cache-Control", "no-cache")
+		}
 		resp.Header.Del("ETag")
 		resp.Header.Del("Last-Modified")
 		c.mu.Lock()
@@ -446,7 +459,7 @@ func (c *Client) startProxy() {
 	// The Hub is plain HTTP on the tailnet. Force HTTP/1.1 so the reverse
 	// proxy keeps DSH WebSocket upgrades working.
 	proxy.Transport.(*http.Transport).ForceAttemptHTTP2 = false
-	server := &http.Server{Handler: proxy, ReadHeaderTimeout: 10 * time.Second}
+	server := &http.Server{Handler: clipboard.proxy(proxy), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			c.setError(fmt.Errorf("proxy serve: %w", err))
