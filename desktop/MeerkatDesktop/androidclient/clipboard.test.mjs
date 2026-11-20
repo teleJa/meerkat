@@ -84,6 +84,17 @@ test('native rejection falls back to the bridge with unchanged text', async t =>
   assert.deepEqual(shim.requests, [writeRequest('old-grant')]);
 });
 
+test('a trusted click can be used for only one clipboard write', async t => {
+  const shim = setup(t, { responses: [response(204), response(204)] });
+  shim.click();
+  await shim.write(text);
+  await assert.rejects(shim.write(text), { name: 'NotAllowedError', message: /再点一次/ });
+  assert.deepEqual(shim.requests, [writeRequest('old-grant')]);
+  shim.click();
+  await shim.write(text);
+  assert.deepEqual(shim.requests, [writeRequest('old-grant'), writeRequest('old-grant')]);
+});
+
 test('an expired grant renews once and remains current for a later click', async t => {
   const shim = setup(t, { responses: [response(403), response(204, 'new-grant'), response(204), response(204)] });
   shim.click();
