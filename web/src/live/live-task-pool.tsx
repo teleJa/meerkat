@@ -181,6 +181,61 @@ export function TaskPoolDetailPage() {
   return <LiveGate><TaskPoolDetail key={itemId} id={itemId} /></LiveGate>;
 }
 
+function TaskPoolReview({ item }: { item: PoolItem }) {
+  const queryClient = useQueryClient();
+  const [returnRevision, setReturnRevision] = useState<number>();
+  const [noteError, setNoteError] = useState("");
+  const review = useMutation({
+    mutationFn: ({ decision, note, revision }: { decision: "approve" | "return"; note: string; revision: number }) =>
+      taskPoolApi.review({ ...item, revision }, decision, note),
+    onSuccess: () => setReturnRevision(undefined),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: poolQueryKey }),
+  });
+  const returning = returnRevision !== undefined;
+  return (
+    <section className="space-y-3 rounded-xl border bg-card p-4" aria-labelledby="pool-review">
+      <h2 id="pool-review" className="text-sm font-semibold">验收任务</h2>
+      {returning ? (
+        <form className="space-y-2" method="post" action={`/api/task-pool/${encodeURIComponent(item.id)}/review`} aria-labelledby="pool-review" onSubmit={event => {
+          event.preventDefault();
+          if (review.isPending) return;
+          const field = event.currentTarget.elements.namedItem("note") as HTMLTextAreaElement;
+          const note = field.value.trim();
+          if (!note || new TextEncoder().encode(note).length > 8192) {
+            setNoteError(note ? "打回原因太长，请缩短后再提交。" : "请填写打回原因。");
+            field.focus();
+            return;
+          }
+          review.mutate({ decision: "return", note, revision: returnRevision });
+        }}>
+          <label htmlFor="pool-review-note" className="text-sm font-medium">打回原因（必填）</label>
+          <textarea id="pool-review-note" name="note" rows={3} className={fieldClass} required readOnly={review.isPending}
+            aria-invalid={Boolean(noteError)} aria-describedby={noteError ? "pool-review-note-error" : undefined}
+            onInvalid={() => setNoteError("请填写打回原因。")} onInput={() => setNoteError("")} />
+          <p id="pool-review-note-error" className="text-sm text-destructive" aria-live="polite">{noteError}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" disabled={review.isPending}>确认打回</Button>
+            <Button type="button" variant="outline" disabled={review.isPending} onClick={() => {
+              setReturnRevision(undefined);
+              setNoteError("");
+              review.reset();
+            }}>取消</Button>
+          </div>
+        </form>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" disabled={review.isPending} onClick={() => review.mutate({ decision: "approve", note: "", revision: item.revision })}>验收通过</Button>
+          <Button type="button" variant="outline" disabled={review.isPending} onClick={() => {
+            review.reset();
+            setReturnRevision(item.revision);
+          }}>打回</Button>
+        </div>
+      )}
+      <p aria-live="polite" className="text-sm">{review.isPending ? "正在提交验收结果…" : review.isError ? errorMessage(review.error) : ""}</p>
+    </section>
+  );
+}
+
 function TaskPoolDetail({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const [selection, setSelection] = useState("");
@@ -236,6 +291,7 @@ function TaskPoolDetail({ id }: { id: string }) {
           </li>)}
         </ol>
       </section>
+      {item.status === "review" && <TaskPoolReview key={item.revision} item={item} />}
     </div>
   );
 }

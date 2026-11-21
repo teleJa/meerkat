@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -82,25 +83,45 @@ func TestTaskPoolAssignmentAndReport(t *testing.T) {
 		t.Fatalf("deliver: %+v %v", item, err)
 	}
 	assertTaskPoolCounts(t, h, 1, 5, 3)
-	if _, err := h.reviewPoolItem(ctx, item.ID, item.Revision, "return", "", now); !errors.Is(err, errPoolInvalid) {
-		t.Fatalf("return without reason: %v", err)
+	h.adminToken = randomHex(32)
+	mux := http.NewServeMux()
+	h.registerHTTP(mux)
+	review := func(credential string, revision int, decision, note string, want int) poolItem {
+		t.Helper()
+		body := fmt.Sprintf(`{"expected_revision":%d,"decision":%q,"note":%q}`, revision, decision, note)
+		request := httptest.NewRequest(http.MethodPost, "/api/task-pool/"+item.ID+"/review", strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer "+credential)
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		if response.Code != want {
+			t.Fatalf("review %s: got %d, want %d (%s)", decision, response.Code, want, response.Body)
+		}
+		var result struct{ Item poolItem }
+		if response.Code == http.StatusOK {
+			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return result.Item
 	}
-	if _, err := h.reviewPoolItem(ctx, item.ID, item.Revision-1, "approve", "", now); !errors.Is(err, errPoolConflict) {
-		t.Fatalf("review stale revision: %v", err)
-	}
-	item, err = h.reviewPoolItem(ctx, item.ID, item.Revision, "return", "补一张验收截图", now)
-	if err != nil || item.Status != "processing" || item.AssignmentRev != grant.AssignmentRev {
-		t.Fatalf("return: %+v %v", item, err)
+	review("", item.Revision, "approve", "", http.StatusUnauthorized)
+	review(h.adminToken, item.Revision, "return", "  ", http.StatusBadRequest)
+	review(h.adminToken, item.Revision, "cancel", "", http.StatusBadRequest)
+	review(h.adminToken, item.Revision-1, "approve", "", http.StatusConflict)
+	item = review(h.adminToken, item.Revision, "return", "补一张验收截图", http.StatusOK)
+	if item.Status != "processing" || item.AssignmentRev != grant.AssignmentRev {
+		t.Fatalf("return: %+v", item)
 	}
 	assertTaskPoolCounts(t, h, 1, 6, 4)
 	item, err = h.reportPoolEvent(ctx, grant, "event-2", "delivered", poolEventBody{Note: "已补", Evidence: []string{"截图"}}, now)
 	if err != nil || item.Status != "review" {
 		t.Fatalf("deliver again: %+v %v", item, err)
 	}
-	item, err = h.reviewPoolItem(ctx, item.ID, item.Revision, "approve", "", now)
-	if err != nil || item.Status != "completed" {
-		t.Fatalf("approve: %+v %v", item, err)
+	item = review(h.adminToken, item.Revision, "approve", "", http.StatusOK)
+	if item.Status != "completed" {
+		t.Fatalf("approve: %+v", item)
 	}
+	review(h.adminToken, item.Revision, "approve", "", http.StatusConflict)
 	var deviceTasks int
 	if err := db.QueryRow("SELECT COUNT(*) FROM tasks").Scan(&deviceTasks); err != nil || deviceTasks != 0 {
 		t.Fatalf("existing device tasks changed: %d %v", deviceTasks, err)

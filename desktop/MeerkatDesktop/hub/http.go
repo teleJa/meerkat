@@ -59,6 +59,7 @@ func (h *Hub) registerHTTP(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/task-pool", h.authAdmin(h.handleCreatePoolItem, true))
 	mux.HandleFunc("POST /api/task-pool/{id}/assign", h.authAdmin(h.handleAssignPoolItem, true))
 	mux.HandleFunc("POST /api/task-pool/{id}/retry", h.authAdmin(h.handleRetryPoolDelivery, true))
+	mux.HandleFunc("POST /api/task-pool/{id}/review", h.authAdmin(h.handleReviewPoolItem, true))
 	mux.HandleFunc("POST /api/task-pool/config/bot-credentials/{botID}", h.authAdmin(h.handlePoolBotCredential, true))
 	mux.HandleFunc("DELETE /api/task-pool/config/bot-credentials/{botID}", h.authAdmin(h.handlePoolBotCredential, true))
 	mux.HandleFunc("POST /api/task-pool/mcp", h.handlePoolMCP)

@@ -369,6 +369,9 @@ export const taskPoolApi = {
     expected_revision: item.revision, assignee_kind: target.kind, assignee_id: target.id,
   }),
   retry: (item: PoolItem) => post<{ item: PoolItem }>(`${poolPath}/${encodeURIComponent(item.id)}/retry`, { expected_revision: item.revision }),
+  review: (item: PoolItem, decision: "approve" | "return", note: string) => post<{ item: PoolItem }>(`${poolPath}/${encodeURIComponent(item.id)}/review`, {
+    expected_revision: item.revision, decision, note,
+  }),
   attachmentURL: (taskId: string, attachmentId: string) => `${poolPath}/${encodeURIComponent(taskId)}/attachments/${encodeURIComponent(attachmentId)}`,
 };
 

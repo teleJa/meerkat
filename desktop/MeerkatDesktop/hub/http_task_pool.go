@@ -194,6 +194,29 @@ func (h *Hub) handleRetryPoolDelivery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"item": item})
 }
 
+// Review uses the existing Hub administrator session. The session authenticates
+// the administrator role without verifying the identity of the person at the device.
+func (h *Hub) handleReviewPoolItem(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Revision int    `json:"expected_revision"`
+		Decision string `json:"decision"`
+		Note     string `json:"note"`
+	}
+	if !readPoolRequest(w, r, &input) {
+		return
+	}
+	if input.Revision < 1 || (input.Decision != "approve" && input.Decision != "return") {
+		writePoolError(w, errPoolInvalid)
+		return
+	}
+	item, err := h.reviewPoolItem(r.Context(), r.PathValue("id"), input.Revision, input.Decision, input.Note, time.Now())
+	if err != nil {
+		writePoolError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"item": item})
+}
+
 func readPoolSnapshot(r *http.Request, tx *sql.Tx, item poolItem, now time.Time) (poolSnapshot, error) {
 	ctx := r.Context()
 	snapshot := poolSnapshot{poolItem: item}
