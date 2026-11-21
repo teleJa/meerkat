@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { createMemoryRouter, RouterProvider } from "react-router-dom";
+import { HashRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { LiveSettingsPage } from "./live-settings";
 
@@ -14,6 +14,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  window.history.replaceState(null, "", window.location.pathname);
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
   vi.unstubAllGlobals();
 });
@@ -25,21 +26,30 @@ function renderSettings(preference: (request?: RequestInit) => Response, path = 
     return Response.json({}, { status: 404 });
   });
   vi.stubGlobal("fetch", fetch);
-  const router = createMemoryRouter([{ path: "/live/settings", element: <LiveSettingsPage /> }], { initialEntries: [path] });
+  window.history.replaceState(null, "", `#${path}`);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const view = render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
-  return { ...view, router };
+  return render(
+    <QueryClientProvider client={client}>
+      <HashRouter>
+        <Routes>
+          <Route path="/live/settings" element={<LiveSettingsPage />} />
+        </Routes>
+      </HashRouter>
+    </QueryClientProvider>,
+  );
 }
 
 const checkbox = () => screen.getByRole<HTMLInputElement>("checkbox", { name: "打开 HTML 前先询问" });
 
 test("a new open parameter refocuses About in the current route", async () => {
-  const { router } = renderSettings(() => Response.json({ ask_before_open: true }), "/live/settings?section=about&open=1");
+  renderSettings(() => Response.json({ ask_before_open: true }), "/live/settings?section=about&open=1");
   const title = screen.getByRole("heading", { name: "关于 Meerkat" });
   await waitFor(() => expect(document.activeElement).toBe(title));
   title.blur();
   scrollIntoView.mockClear();
-  await act(() => router.navigate("/live/settings?section=about&open=2"));
+  await act(async () => {
+    window.location.hash = "#/live/settings?section=about&open=2";
+  });
   await waitFor(() => expect(document.activeElement).toBe(title));
   expect(scrollIntoView).toHaveBeenCalledOnce();
 });
