@@ -27,11 +27,14 @@ import (
 const ProtocolVersion = "1"
 
 type Config struct {
-	Host       string
-	Port       int
-	DataDir    string
-	Version    string
-	AdminToken string
+	Host                string
+	Port                int
+	DataDir             string
+	Version             string
+	AdminToken          string
+	TaskPoolBotDeviceID string
+	TaskPoolChiefBotID  string
+	TaskPoolBoardURL    string
 }
 
 type Hub struct {
@@ -48,6 +51,8 @@ type Hub struct {
 	harnessClosed bool
 	harnessLog    *harnessProxyLog
 	turnWatcher   *turnWatcher
+	poolCancel    context.CancelFunc
+	poolDone      chan struct{}
 	tsnetMu       sync.Mutex
 	tsnetServer   *tsnet.Server
 	tsnetCancel   context.CancelFunc
@@ -165,6 +170,15 @@ func (h *Hub) Start() error {
 		return err
 	}
 	h.listener = listener
+	if strings.TrimSpace(h.cfg.TaskPoolBotDeviceID) != "" {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		h.poolCancel, h.poolDone = cancel, done
+		go func() {
+			defer close(done)
+			h.runPoolDeliveries(ctx)
+		}()
+	}
 	go func() {
 		if err := h.server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Printf("go hub server stopped: %v", err)
@@ -175,6 +189,9 @@ func (h *Hub) Start() error {
 
 func (h *Hub) Close() error {
 	h.StopTurnWatcher()
+	if h.poolCancel != nil {
+		h.poolCancel()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = h.server.Shutdown(ctx)
@@ -188,6 +205,9 @@ func (h *Hub) Close() error {
 	h.harnessClosed = true
 	h.harnessMu.Unlock()
 	h.resetHarnessProxies()
+	if h.poolDone != nil {
+		<-h.poolDone
+	}
 	h.harnessLog.close()
 	return h.db.Close()
 }

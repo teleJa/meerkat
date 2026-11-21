@@ -2,7 +2,10 @@ package hub
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -98,7 +101,11 @@ func TestTaskPoolDeliveryTimeoutAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE task_pool_deliveries SET status='uncertain' WHERE item_id=?`, item.ID); err != nil {
+	delivery, err := h.claimPoolDelivery(ctx, now)
+	if err != nil || delivery.ItemID != item.ID || delivery.Target != target.ID || delivery.Actor != target.ActorID || delivery.Kind != target.Kind {
+		t.Fatalf("claim: %+v %v", delivery, err)
+	}
+	if err := h.settlePoolDelivery(ctx, delivery.ID, "uncertain", "delivery_unconfirmed", now); err != nil {
 		t.Fatal(err)
 	}
 	deadline := now.Add(poolDeliveryTimeout)
@@ -119,6 +126,57 @@ func TestTaskPoolDeliveryTimeoutAndRetry(t *testing.T) {
 		t.Fatalf("old uncertain delivery after retry: %d %v", count, err)
 	}
 	assertTaskPoolCounts(t, h, 1, 2, 2)
+}
+
+func TestTaskPoolReadRoutes(t *testing.T) {
+	db, err := openDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	h := &Hub{db: db, adminToken: "fixture-user-token"}
+	mux := http.NewServeMux()
+	h.registerHTTP(mux)
+	request := func(path, credential string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		if credential != "" {
+			req.Header.Set("Authorization", "Bearer "+credential)
+		}
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		return w
+	}
+	if response := request("/api/task-pool", ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous list: %d", response.Code)
+	}
+	now := time.Now()
+	item, _, err := h.createPoolItem(context.Background(), poolCreate{Request: "原文含 @编码"}, "", poolTarget{}, "chief", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := request("/api/task-pool", h.adminToken)
+	var list struct{ Items []poolSnapshot }
+	if err := json.Unmarshal(response.Body.Bytes(), &list); err != nil || response.Code != http.StatusOK || len(list.Items) != 1 {
+		t.Fatalf("list: %d %s %v", response.Code, response.Body, err)
+	}
+	if snapshot := list.Items[0]; snapshot.ID != item.ID || snapshot.Delivery == nil || snapshot.Delivery.Status != "pending" {
+		t.Fatalf("list snapshot: %+v", snapshot)
+	}
+	response = request("/api/task-pool/"+item.ID, h.adminToken)
+	var detail struct {
+		Item   poolSnapshot
+		Events []poolHistoryEvent
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &detail); err != nil || response.Code != http.StatusOK || len(detail.Events) != 1 {
+		t.Fatalf("detail: %d %s %v", response.Code, response.Body, err)
+	}
+	if detail.Item.Request != item.Request || detail.Events[0].Type != "created" {
+		t.Fatalf("detail snapshot: %+v", detail)
+	}
+	if response := request("/api/task-pool/missing", h.adminToken); response.Code != http.StatusNotFound {
+		t.Fatalf("missing detail: %d", response.Code)
+	}
 }
 
 func assertTaskPoolCounts(t *testing.T, h *Hub, items, events, deliveries int) {
