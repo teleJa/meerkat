@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -169,6 +170,17 @@ func TestTaskPoolReadRoutes(t *testing.T) {
 	if response := request("/api/task-pool", ""); response.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous list: %d", response.Code)
 	}
+	if response := request("/api/task-pool/targets", h.adminToken); response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unconfigured target list: %d", response.Code)
+	}
+	create := httptest.NewRequest(http.MethodPost, "/api/task-pool", strings.NewReader(`{"request":"should not persist"}`))
+	create.Header.Set("Authorization", "Bearer "+h.adminToken)
+	blocked := httptest.NewRecorder()
+	mux.ServeHTTP(blocked, create)
+	if blocked.Code != http.StatusServiceUnavailable || !strings.Contains(blocked.Body.String(), "task_pool_unconfigured") {
+		t.Fatalf("unconfigured create: %d %s", blocked.Code, blocked.Body)
+	}
+	assertTaskPoolCounts(t, h, 0, 0, 0)
 	now := time.Now()
 	item, _, err := h.createPoolItem(context.Background(), poolCreate{Request: "原文含 @编码"}, "", poolTarget{}, "chief", now)
 	if err != nil {

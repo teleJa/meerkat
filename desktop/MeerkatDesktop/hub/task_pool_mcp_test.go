@@ -41,7 +41,7 @@ func TestTaskPoolMCPReportScopeAndRevocation(t *testing.T) {
 		r.Header.Set("Authorization", "Bearer "+token)
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, r)
-		if w.Code != status || !strings.Contains(w.Body.String(), want) || strings.Contains(w.Body.String(), token) {
+		if (method == "POST" && path == "/api/task-pool/mcp" && want == "task_pool_forbidden" && !strings.Contains(w.Body.String(), `"isError":true`)) || w.Code != status || !strings.Contains(w.Body.String(), want) || strings.Contains(w.Body.String(), token) {
 			t.Fatalf("response: %d %s, want %d with %q", w.Code, w.Body, status, want)
 		}
 	}
@@ -52,10 +52,10 @@ func TestTaskPoolMCPReportScopeAndRevocation(t *testing.T) {
 	check("POST", mcp, h.adminToken, tools, http.StatusUnauthorized, "task_pool_credential_required")
 	check("POST", mcp, actorToken, tools, http.StatusOK, "assign_task")
 	check("POST", mcp, foreignToken, tools, http.StatusOK, "report_progress")
-	check("POST", mcp, foreignToken, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_unassigned","arguments":{}}}`, http.StatusForbidden, "task_pool_forbidden")
-	check("POST", mcp, foreignToken, read, http.StatusForbidden, "task_pool_forbidden")
+	check("POST", mcp, foreignToken, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_unassigned","arguments":{}}}`, http.StatusOK, "task_pool_forbidden")
+	check("POST", mcp, foreignToken, read, http.StatusOK, "task_pool_forbidden")
 	check("POST", mcp, actorToken, read, http.StatusOK, "synthetic task data")
-	check("POST", mcp, foreignToken, report, http.StatusForbidden, "task_pool_forbidden")
+	check("POST", mcp, foreignToken, report, http.StatusOK, "task_pool_forbidden")
 	check("POST", mcp, actorToken, report, http.StatusOK, "assignment_rev")
 	check("POST", mcp, actorToken, report, http.StatusOK, "assignment_rev")
 	attachmentPath := "/api/task-pool/" + item.ID + "/attachments/" + attachment.ID

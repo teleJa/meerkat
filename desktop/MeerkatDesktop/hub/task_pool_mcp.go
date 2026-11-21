@@ -278,7 +278,9 @@ func (h *Hub) handlePoolMCPCall(w http.ResponseWriter, r *http.Request, request 
 		if errors.Is(err, sql.ErrNoRows) {
 			err = errPoolForbidden
 		}
-		writePoolError(w, err)
+		_, code, message := poolErrorDetails(err)
+		poolMCPResult(w, request.ID, map[string]any{"isError": true,
+			"content": []map[string]string{{"type": "text", "text": code + ": " + message}}})
 		return
 	}
 	data, err := json.Marshal(item)

@@ -53,7 +53,8 @@ export function TaskPoolBoard() {
   const cards = items.data?.items ?? [];
   return (
     <section className="space-y-4" aria-label="任务池">
-      <PageHeader title="任务看板" actions={<Button asChild><Link to="/live/task-pool/new">新任务</Link></Button>} />
+      <PageHeader title="任务看板" actions={targets.isSuccess && <Button asChild><Link to="/live/task-pool/new">新任务</Link></Button>} />
+      {targets.isError && <p role="status" className="text-sm text-muted-foreground">暂时无法创建任务。{errorMessage(targets.error)}</p>}
       {items.isPending && <p role="status" className="text-sm text-muted-foreground">正在读取任务…</p>}
       {items.isError && <p role="alert" className="text-sm text-destructive">{errorMessage(items.error)}</p>}
       {!items.isPending && !items.isError && (
@@ -134,6 +135,14 @@ export function NewTaskPoolForm() {
     const target = targets.data?.targets.find(option => targetKey(option) === form.get("target"));
     create.mutate({ text, target });
   }
+  if (!targets.isSuccess) {
+    return (
+      <div className="space-y-4">
+        <Link className="text-sm text-muted-foreground hover:underline" to="/live/board">返回任务看板</Link>
+        <p role="status">{targets.isError ? errorMessage(targets.error) : "正在检查任务池配置…"}</p>
+      </div>
+    );
+  }
   return (
     <div className="max-w-2xl space-y-4">
       <Link className="text-sm text-muted-foreground hover:underline" to="/live/board">返回任务看板</Link>
@@ -151,7 +160,7 @@ export function NewTaskPoolForm() {
             <option value="">交给 Chief 分配</option>
             {targets.data?.targets.map(target => <option key={targetKey(target)} value={targetKey(target)}>{target.name}（{target.kind === "group" ? "群" : "Bot"}）</option>)}
           </select>
-          {targets.isError && <p className="text-sm text-muted-foreground">暂时无法读取 Bot 和群。可以先提交到待分配。</p>}
+          <p className="text-xs text-muted-foreground">群仅支持由管理员接收普通消息的模式。</p>
         </div>
         <div className="space-y-1">
           <label htmlFor="task-pool-files" className="text-sm font-medium">附件</label>

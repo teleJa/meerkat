@@ -75,3 +75,16 @@ test("retrying the same submission keeps its key, target and uploaded attachment
   expect(second.headers).toEqual(first.headers);
   expect(JSON.parse(String(second.body))).toEqual({ request: "检查交付", attachment_ids: ["att_fixture"], assignee_kind: "bot", assignee_id: "builder" });
 });
+
+test("an unconfigured workspace explains why task creation is unavailable", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/targets")
+    ? Response.json({ error: { code: "task_pool_unconfigured", message: "任务池尚未配置" } }, { status: 503 })
+    : Response.json({ items: [] })));
+  const board = mount(<TaskPoolBoard />);
+  await screen.findByText(/任务池尚未配置/);
+  expect(screen.queryByRole("link", { name: "新任务" })).toBeNull();
+  board.unmount();
+  mount(<NewTaskPoolForm />);
+  await screen.findByText("任务池尚未配置");
+  expect(screen.queryByRole("button", { name: "创建任务" })).toBeNull();
+});

@@ -163,7 +163,9 @@ func TestTaskPoolChiefToGroupDelivery(t *testing.T) {
 	assign := fmt.Sprintf(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"assign_task","arguments":{"task_id":%q,"expected_revision":1,"assignee_kind":"group","assignee_id":"team"}}}`, result.Item.ID)
 	call("POST", "/api/task-pool/mcp", credential.Credential, assign, http.StatusOK)
 	flush("team", "assigned")
-	call("POST", "/api/task-pool/mcp", credential.Credential, assign, http.StatusConflict)
+	if replay := call("POST", "/api/task-pool/mcp", credential.Credential, assign, http.StatusOK); !strings.Contains(replay.Body.String(), `"isError":true`) || !strings.Contains(replay.Body.String(), "task_pool_conflict") {
+		t.Fatalf("replayed assignment: %s", replay.Body)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if fmt.Sprint(targets) != "[chief team]" {

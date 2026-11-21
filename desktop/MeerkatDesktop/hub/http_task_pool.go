@@ -32,23 +32,28 @@ type poolHistoryEvent struct {
 	At            string        `json:"at"`
 }
 
-func writePoolError(w http.ResponseWriter, err error) {
+func poolErrorDetails(err error) (status int, code, message string) {
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		writeError(w, http.StatusNotFound, "task_pool_not_found", "任务不存在")
+		return http.StatusNotFound, "task_pool_not_found", "任务不存在"
 	case errors.Is(err, errPoolInvalid):
-		writeError(w, http.StatusBadRequest, "invalid_task_pool_request", "任务信息或操作无效")
+		return http.StatusBadRequest, "invalid_task_pool_request", "任务信息或操作无效"
 	case errors.Is(err, errPoolReassigned):
-		writeError(w, http.StatusConflict, "assignment_changed", "任务已改派，请停止回写")
+		return http.StatusConflict, "assignment_changed", "任务已改派，请停止回写"
 	case errors.Is(err, errPoolConflict):
-		writeError(w, http.StatusConflict, "task_pool_conflict", "任务状态或版本已变化，请刷新后重试")
+		return http.StatusConflict, "task_pool_conflict", "任务状态或版本已变化，请刷新后重试"
 	case errors.Is(err, errPoolBotUnavailable):
-		writeError(w, http.StatusServiceUnavailable, "task_pool_bot_unavailable", "DS Bot 暂不可用，请稍后重试")
+		return http.StatusServiceUnavailable, "task_pool_bot_unavailable", "DS Bot 暂不可用，请稍后重试"
 	case errors.Is(err, errPoolForbidden):
-		writeError(w, http.StatusForbidden, "task_pool_forbidden", "当前凭据无权操作这张任务卡")
+		return http.StatusForbidden, "task_pool_forbidden", "当前凭据无权操作这张任务卡"
 	default:
-		writeError(w, http.StatusInternalServerError, "internal_error", "中心内部错误")
+		return http.StatusInternalServerError, "internal_error", "中心内部错误"
 	}
+}
+
+func writePoolError(w http.ResponseWriter, err error) {
+	status, code, message := poolErrorDetails(err)
+	writeError(w, status, code, message)
 }
 
 type poolAssignmentRequest struct {
@@ -68,6 +73,10 @@ func readPoolRequest(w http.ResponseWriter, r *http.Request, input any) bool {
 }
 
 func (h *Hub) handlePoolTargets(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.TaskPoolBotDeviceID == "" || h.cfg.TaskPoolChiefBotID == "" {
+		writeError(w, http.StatusServiceUnavailable, "task_pool_unconfigured", "任务池尚未配置 DS Bot 设备和分派负责人")
+		return
+	}
 	client, err := h.taskPoolBotClient(h.cfg.TaskPoolBotDeviceID)
 	if err != nil {
 		writePoolError(w, err)
@@ -120,6 +129,10 @@ func (h *Hub) resolvePoolTarget(r *http.Request, request poolAssignmentRequest) 
 }
 
 func (h *Hub) handleCreatePoolItem(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.TaskPoolBotDeviceID == "" || h.cfg.TaskPoolChiefBotID == "" {
+		writeError(w, http.StatusServiceUnavailable, "task_pool_unconfigured", "任务池尚未配置 DS Bot 设备和分派负责人")
+		return
+	}
 	var input struct {
 		poolCreate
 		poolAssignmentRequest
