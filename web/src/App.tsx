@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppShell } from "@/components/app-shell";
 import { LiveBoardPage } from "@/live/live-board";
+import { NewTaskPoolPage, TaskPoolDetailPage } from "@/live/live-task-pool";
 import { LiveHarnessPage } from "@/live/live-harness";
 import { LiveSettingsPage } from "@/live/live-settings";
 import { LiveDevicesPage } from "@/live/live-devices";
@@ -26,6 +27,8 @@ export default function App() {
             <Route index element={<Navigate to="/live/harness" replace />} />
             <Route path="live" element={<LiveDevicesPage />} />
             <Route path="live/board" element={<LiveBoardPage />} />
+            <Route path="live/task-pool/new" element={<NewTaskPoolPage />} />
+            <Route path="live/task-pool/:itemId" element={<TaskPoolDetailPage />} />
             <Route path="live/devices/:deviceId" element={<LiveDeviceDetailPage />} />
             <Route path="live/tasks" element={<LiveTasksPage />} />
           <Route path="live/harness" element={<LiveHarnessPage />} />

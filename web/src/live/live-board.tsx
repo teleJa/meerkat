@@ -8,6 +8,7 @@ import { TaskStatusBadge } from "@/components/status-badge";
 import { LiveGate } from "@/live/live-gate";
 import { EmptyState, InfoBanner } from "@/live/live-shared";
 import { errorMessage, formatRelative, liveApi, type LiveTask } from "@/live/api";
+import { TaskPoolBoard } from "@/live/live-task-pool";
 
 const columns: { key: string; label: string; hint: string; statuses: LiveTask["status"][] }[] = [
   { key: "queued", label: "待处理", hint: "指令已排队，等待 Edge 执行", statuses: ["queued"] },
@@ -19,7 +20,13 @@ const columns: { key: string; label: string; hint: string; statuses: LiveTask["s
 export function LiveBoardPage() {
   return (
     <LiveGate>
-      <LiveBoardContent />
+      <div className="space-y-6">
+        <TaskPoolBoard />
+        <details className="rounded-xl border bg-card p-4">
+          <summary className="cursor-pointer text-sm font-medium">设备执行记录</summary>
+          <div className="mt-4"><LiveBoardContent /></div>
+        </details>
+      </div>
     </LiveGate>
   );
 }
@@ -55,7 +62,7 @@ function LiveBoardContent() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="任务看板"
+        title="设备执行记录"
         description="按状态查看所有设备上的任务；点击卡片查看任务详情。"
         actions={
           <>

@@ -314,6 +314,63 @@ function queryString(params: object): string {
   return query.length > 0 ? "?" + query : "";
 }
 
+export type PoolStatus = "unassigned" | "processing" | "blocked" | "review" | "completed" | "cancelled";
+
+export interface PoolTarget {
+  kind: "bot" | "group";
+  id: string;
+  name: string;
+}
+
+interface PoolProgress {
+  note?: string;
+  evidence?: string[];
+}
+
+export interface PoolItem {
+  id: string;
+  title: string;
+  request: string;
+  status: PoolStatus;
+  assignee_kind?: PoolTarget["kind"];
+  assignee_id?: string;
+  revision: number;
+  attachment_ids: string[];
+  updated_at: string;
+  latest_progress?: PoolProgress;
+  delivery?: {
+    status: "pending" | "sending" | "queued" | "uncertain" | "failed" | "acknowledged" | "superseded";
+    error_code?: string;
+    can_retry: boolean;
+  };
+}
+
+interface PoolEvent {
+  event_id: string;
+  actor_id: string;
+  assignment_rev: number;
+  type: string;
+  payload: PoolProgress;
+  at: string;
+}
+
+const poolPath = "/api/task-pool";
+
+export const taskPoolApi = {
+  list: () => request<{ items: PoolItem[] }>(poolPath),
+  detail: (id: string) => request<{ item: PoolItem; events: PoolEvent[] }>(`${poolPath}/${encodeURIComponent(id)}`),
+  targets: () => request<{ targets: PoolTarget[] }>(`${poolPath}/targets`),
+  create: (text: string, attachments: string[], key: string, target?: PoolTarget) => request<{ item: PoolItem }>(poolPath, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-meerkat-request": "1", "idempotency-key": key },
+    body: JSON.stringify({ request: text, attachment_ids: attachments, assignee_kind: target?.kind, assignee_id: target?.id }),
+  }),
+  assign: (item: PoolItem, target: PoolTarget) => post<{ item: PoolItem }>(`${poolPath}/${encodeURIComponent(item.id)}/assign`, {
+    expected_revision: item.revision, assignee_kind: target.kind, assignee_id: target.id,
+  }),
+  retry: (item: PoolItem) => post<{ item: PoolItem }>(`${poolPath}/${encodeURIComponent(item.id)}/retry`, { expected_revision: item.revision }),
+};
+
 export const liveApi = {
   session: () => request<SessionInfo>("/api/session"),
   login: (token: string) =>
@@ -355,7 +412,7 @@ export const liveApi = {
   uploadAttachment: async (file: File): Promise<LiveAttachment> => {
     const body = new FormData();
     body.append("file", file);
-    const response = await fetch("/api/attachments", { method: "POST", body });
+    const response = await fetch("/api/attachments", { method: "POST", headers: { "x-meerkat-request": "1" }, body });
     if (!response.ok) throw new Error("上传附件失败");
     return (await response.json()) as LiveAttachment;
   },
