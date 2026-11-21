@@ -27,7 +27,7 @@ func TestTaskPoolBotDirectoryAndReceipts(t *testing.T) {
 			return
 		}
 		if input.Endpoint != "send" || input.Payload["sessionId"] != "admin-room" || strings.Contains(input.Payload["text"], "@") ||
-			!strings.Contains(input.Payload["text"], "http://example.test/#/live/task-pool/tp_1") {
+			!strings.Contains(input.Payload["text"], "任务 ID tp_1 · Meerkat 看板 #/live/task-pool/tp_1") {
 			t.Errorf("unexpected delivery payload: %+v", input)
 		}
 		sends++
@@ -58,7 +58,7 @@ func TestTaskPoolBotDirectoryAndReceipts(t *testing.T) {
 		}
 	}
 	for _, want := range [][2]string{{"queued", ""}, {"failed", "bot/invalid"}, {"uncertain", "delivery_unconfirmed"}, {"uncertain", "delivery_unconfirmed"}} {
-		status, code := client.send(ctx, "admin-room", "assigned", "http://example.test/#/live/task-pool/tp_1?from=@example")
+		status, code := client.send(ctx, "admin-room", "assigned", "tp_1")
 		if status != want[0] || code != want[1] {
 			t.Fatalf("send returned (%s, %s), want %v", status, code, want)
 		}

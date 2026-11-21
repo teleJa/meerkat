@@ -33,11 +33,11 @@ func TestTaskPoolAssignmentAndReport(t *testing.T) {
 	if _, _, err := h.createPoolItem(ctx, poolCreate{Request: "another"}, "form-1", poolTarget{}, "chief", now); !errors.Is(err, errPoolConflict) {
 		t.Fatalf("create key with different payload: %v", err)
 	}
-	item, err = h.assignPoolItem(ctx, item.ID, item.Revision, "chief", poolTarget{Kind: "group", ID: "group", ActorID: "admin"}, now)
+	item, err = h.assignPoolItem(ctx, item.ID, item.Revision, "chief", "", poolTarget{Kind: "group", ID: "group", ActorID: "admin"}, now)
 	if err != nil || item.AssignmentRev != 1 || item.Status != "processing" {
 		t.Fatalf("assign: %+v %v", item, err)
 	}
-	if _, err := h.assignPoolItem(ctx, item.ID, 1, "chief", poolTarget{Kind: "bot", ID: "b", ActorID: "b"}, now); !errors.Is(err, errPoolConflict) {
+	if _, err := h.assignPoolItem(ctx, item.ID, 1, "chief", "", poolTarget{Kind: "bot", ID: "b", ActorID: "b"}, now); !errors.Is(err, errPoolConflict) {
 		t.Fatalf("stale assignment: %v", err)
 	}
 	grant := poolReportGrant{ItemID: item.ID, ActorID: "admin", AssignmentRev: 1, ExpiresAt: now.Add(time.Minute)}
@@ -65,7 +65,7 @@ func TestTaskPoolAssignmentAndReport(t *testing.T) {
 	if err := db.QueryRow(`SELECT status FROM task_pool_deliveries WHERE item_id=? AND assignment_rev=1`, item.ID).Scan(&delivery); err != nil || delivery != "acknowledged" {
 		t.Fatalf("delivery: %q %v", delivery, err)
 	}
-	item, err = h.assignPoolItem(ctx, item.ID, item.Revision, "user", poolTarget{Kind: "bot", ID: "b", ActorID: "b"}, now)
+	item, err = h.assignPoolItem(ctx, item.ID, item.Revision, "user", "", poolTarget{Kind: "bot", ID: "b", ActorID: "b"}, now)
 	if err != nil || item.AssignmentRev != 2 {
 		t.Fatalf("reassign: %+v %v", item, err)
 	}

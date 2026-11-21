@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"log"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -52,12 +51,6 @@ func (h *Hub) settlePoolDelivery(ctx context.Context, id, status, code string, n
 }
 
 func (h *Hub) sendPoolDelivery(ctx context.Context, delivery poolDelivery) (string, string) {
-	board, err := url.Parse(h.cfg.TaskPoolBoardURL)
-	if err != nil || (board.Scheme != "http" && board.Scheme != "https") || board.Host == "" || board.User != nil || board.RawQuery != "" || board.ForceQuery {
-		return "failed", "task_pool_board_url_invalid"
-	}
-	board.Fragment = "/live/task-pool/" + delivery.ItemID
-	board.RawFragment = ""
 	client, err := h.taskPoolBotClient(h.cfg.TaskPoolBotDeviceID)
 	if err != nil {
 		return "failed", "ds_bot_unavailable"
@@ -73,7 +66,7 @@ func (h *Hub) sendPoolDelivery(ctx context.Context, delivery poolDelivery) (stri
 	if !ok || target.ActorID != delivery.Actor {
 		return "failed", "delivery_target_changed"
 	}
-	return client.send(ctx, target.ID, delivery.Purpose, board.String())
+	return client.send(ctx, target.ID, delivery.Purpose, delivery.ItemID)
 }
 
 func (h *Hub) runPoolDeliveries(ctx context.Context) {

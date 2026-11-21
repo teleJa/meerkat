@@ -64,6 +64,7 @@ func (h *Hub) registerHTTP(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/task-pool/mcp", h.handlePoolMCP)
 	mux.HandleFunc("GET /api/task-pool/mcp", h.handlePoolMCP)
 	mux.HandleFunc("DELETE /api/task-pool/mcp", h.handlePoolMCP)
+	mux.HandleFunc("GET /api/task-pool/{id}/attachments/{attachmentID}", h.handlePoolAssignmentAttachment)
 	mux.HandleFunc("POST /api/tasks", h.auth(h.handleCreateTask, true))
 	mux.HandleFunc("GET /api/tasks", h.authWithScope(h.handleListTasks, MobileScopeTasks, false))
 	mux.HandleFunc("GET /api/tasks/{id}", h.authWithScope(h.handleTaskDetail, MobileScopeTasks, false))

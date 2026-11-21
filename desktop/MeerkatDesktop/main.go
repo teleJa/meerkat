@@ -550,7 +550,6 @@ func startEmbeddedHub() {
 		Host: bindHost(), Port: port, DataDir: filepath.Join(configDir(), "center"), Version: "0.1.0",
 		TaskPoolBotDeviceID: strings.TrimSpace(os.Getenv("MEERKAT_TASK_POOL_BOT_DEVICE_ID")),
 		TaskPoolChiefBotID:  strings.TrimSpace(os.Getenv("MEERKAT_TASK_POOL_CHIEF_BOT_ID")),
-		TaskPoolBoardURL:    strings.TrimSpace(os.Getenv("MEERKAT_TASK_POOL_BOARD_URL")),
 	})
 	if err != nil {
 		log.Printf("启动 Go Hub 失败: %v", err)

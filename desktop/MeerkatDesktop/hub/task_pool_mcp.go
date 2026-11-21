@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -59,7 +60,7 @@ type poolMCPRequest struct {
 }
 
 var poolMCPTools = []map[string]any{
-	{"name": "read_task", "description": "Read the task currently assigned to you. Use its assignment_rev in reports.",
+	{"name": "read_task", "description": "Read the task currently assigned to you. Use its assignment_rev in reports. Attachment IDs can be downloaded at GET /api/task-pool/{task_id}/attachments/{attachment_id} using your task pool credential.",
 		"inputSchema": map[string]any{"type": "object", "required": []string{"task_id"}, "properties": map[string]any{
 			"task_id": map[string]string{"type": "string"},
 		}}},
@@ -69,6 +70,25 @@ var poolMCPTools = []map[string]any{
 			"event_id": map[string]string{"type": "string"}, "kind": map[string]any{"type": "string", "enum": []string{"accepted", "progress", "blocked", "delivered"}},
 			"note": map[string]string{"type": "string"}, "evidence": map[string]any{"type": "array", "items": map[string]string{"type": "string"}},
 		}}},
+}
+
+var poolChiefTools = []map[string]any{
+	{"name": "list_unassigned", "description": "Read the latest unassigned tasks and available assignees.",
+		"inputSchema": map[string]any{"type": "object"}},
+	{"name": "assign_task", "description": "Assign an unassigned task to an available Bot or group. Use the current expected_revision.",
+		"inputSchema": map[string]any{"type": "object", "required": []string{"task_id", "expected_revision", "assignee_kind", "assignee_id"}, "properties": map[string]any{
+			"task_id": map[string]string{"type": "string"}, "expected_revision": map[string]string{"type": "integer"},
+			"assignee_kind": map[string]any{"type": "string", "enum": []string{"bot", "group"}}, "assignee_id": map[string]string{"type": "string"},
+		}}},
+}
+
+func verifyPoolCredential(ctx context.Context, tx *sql.Tx, actor, hash string) error {
+	var valid int
+	err := tx.QueryRowContext(ctx, `SELECT 1 FROM task_pool_bot_credentials WHERE token_hash=? AND bot_id=?`, hash, actor).Scan(&valid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errPoolForbidden
+	}
+	return err
 }
 
 func poolMCPResult(w http.ResponseWriter, id json.RawMessage, result any) {
@@ -130,7 +150,11 @@ func (h *Hub) handlePoolMCP(w http.ResponseWriter, r *http.Request) {
 	case "ping":
 		poolMCPResult(w, request.ID, struct{}{})
 	case "tools/list":
-		poolMCPResult(w, request.ID, map[string]any{"tools": poolMCPTools})
+		tools := poolMCPTools
+		if actor == h.cfg.TaskPoolChiefBotID {
+			tools = append(append([]map[string]any(nil), poolMCPTools...), poolChiefTools...)
+		}
+		poolMCPResult(w, request.ID, map[string]any{"tools": tools})
 	case "tools/call":
 		h.handlePoolMCPCall(w, r, request, actor, hash)
 	default:
@@ -169,6 +193,45 @@ func (h *Hub) readPoolAssignment(r *http.Request, id, actor, hash string) (any, 
 	return assignment, nil
 }
 
+func (h *Hub) poolChiefQueue(r *http.Request, actor, hash string) (any, error) {
+	ctx := r.Context()
+	client, err := h.taskPoolBotClient(h.cfg.TaskPoolBotDeviceID)
+	if err != nil {
+		return nil, err
+	}
+	directory, err := client.directory(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if err := verifyPoolCredential(ctx, tx, actor, hash); err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,title,revision FROM task_pool_items WHERE status='unassigned' ORDER BY rowid DESC LIMIT 30`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type summary struct {
+		ID       string `json:"task_id"`
+		Title    string `json:"title"`
+		Revision int    `json:"expected_revision"`
+	}
+	tasks := []summary{}
+	for rows.Next() {
+		var task summary
+		if err := rows.Scan(&task.ID, &task.Title, &task.Revision); err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, task)
+	}
+	return map[string]any{"items": tasks, "targets": directory.options()}, rows.Err()
+}
+
 func (h *Hub) handlePoolMCPCall(w http.ResponseWriter, r *http.Request, request poolMCPRequest, actor, hash string) {
 	var call struct {
 		Name string `json:"name"`
@@ -178,9 +241,10 @@ func (h *Hub) handlePoolMCPCall(w http.ResponseWriter, r *http.Request, request 
 			EventID string `json:"event_id"`
 			Kind    string `json:"kind"`
 			poolEventBody
+			poolAssignmentRequest
 		} `json:"arguments"`
 	}
-	if json.Unmarshal(request.Params, &call) != nil || call.Args.TaskID == "" || (call.Name != "read_task" && call.Name != "report_progress") {
+	if json.Unmarshal(request.Params, &call) != nil || (call.Name != "list_unassigned" && call.Args.TaskID == "") {
 		poolMCPError(w, request.ID, -32602, "Unknown tool or invalid arguments")
 		return
 	}
@@ -188,11 +252,27 @@ func (h *Hub) handlePoolMCPCall(w http.ResponseWriter, r *http.Request, request 
 	now := time.Now()
 	var item any
 	var err error
-	if call.Name == "read_task" {
+	switch call.Name {
+	case "read_task":
 		item, err = h.readPoolAssignment(r, call.Args.TaskID, actor, hash)
-	} else {
+	case "report_progress":
 		grant := poolReportGrant{ItemID: call.Args.TaskID, ActorID: actor, AssignmentRev: call.Args.Rev, ExpiresAt: now.Add(time.Minute), CredentialHash: hash}
 		item, err = h.reportPoolEvent(ctx, grant, call.Args.EventID, call.Args.Kind, call.Args.poolEventBody, now)
+	case "list_unassigned", "assign_task":
+		if actor != h.cfg.TaskPoolChiefBotID {
+			err = errPoolForbidden
+		} else if call.Name == "list_unassigned" {
+			item, err = h.poolChiefQueue(r, actor, hash)
+		} else {
+			var target poolTarget
+			target, err = h.resolvePoolTarget(r, call.Args.poolAssignmentRequest)
+			if err == nil {
+				item, err = h.assignPoolItem(ctx, call.Args.TaskID, call.Args.Revision, actor, hash, target, now)
+			}
+		}
+	default:
+		poolMCPError(w, request.ID, -32601, "Unknown tool")
+		return
 	}
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

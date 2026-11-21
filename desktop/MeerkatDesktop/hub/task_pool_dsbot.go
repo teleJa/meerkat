@@ -131,17 +131,17 @@ func (c *poolBotClient) directory(ctx context.Context) (poolBotDirectory, error)
 	return directory, nil
 }
 
-func (c *poolBotClient) send(ctx context.Context, target, purpose, cardURL string) (status, code string) {
-	notice := "Meerkat 有一项任务已分派，请在卡片查看并回报进展。"
+func (c *poolBotClient) send(ctx context.Context, target, purpose, itemID string) (status, code string) {
+	notice := "Meerkat 有一项任务已分派。请用任务池工具 read_task 查看任务，再用 report_progress 回报。"
 	switch purpose {
 	case "assign_requested":
-		notice = "Meerkat 有一项任务待分派，请打开任务卡。"
+		notice = "Meerkat 有一项任务待分派。请使用任务池工具 list_unassigned 和 assign_task。"
 	case "returned":
 		notice = "Meerkat 有一项任务已打回，请打开任务卡查看原因。"
 	}
 	result, err := c.call(ctx, "send", map[string]string{
 		"sessionId": target,
-		"text":      notice + "\n" + strings.ReplaceAll(cardURL, "@", "%40"),
+		"text":      notice + "\n任务 ID " + strings.ReplaceAll(itemID, "@", "＠") + " · Meerkat 看板 #/live/task-pool/" + strings.ReplaceAll(url.PathEscape(itemID), "@", "%40"),
 	})
 	if err != nil {
 		return "uncertain", "delivery_unconfirmed"

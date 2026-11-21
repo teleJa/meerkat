@@ -176,7 +176,7 @@ func (h *Hub) createPoolItem(ctx context.Context, input poolCreate, key string, 
 	return item, true, tx.Commit()
 }
 
-func (h *Hub) assignPoolItem(ctx context.Context, id string, revision int, actor string, target poolTarget, now time.Time) (poolItem, error) {
+func (h *Hub) assignPoolItem(ctx context.Context, id string, revision int, actor, credentialHash string, target poolTarget, now time.Time) (poolItem, error) {
 	if !target.valid() || actor == "" {
 		return poolItem{}, errPoolInvalid
 	}
@@ -188,6 +188,17 @@ func (h *Hub) assignPoolItem(ctx context.Context, id string, revision int, actor
 	item, err := poolItemIn(ctx, tx, id)
 	if err != nil {
 		return poolItem{}, err
+	}
+	if credentialHash != "" {
+		if actor != h.cfg.TaskPoolChiefBotID {
+			return poolItem{}, errPoolForbidden
+		}
+		if err := verifyPoolCredential(ctx, tx, actor, credentialHash); err != nil {
+			return poolItem{}, err
+		}
+		if item.Status != "unassigned" {
+			return poolItem{}, errPoolConflict
+		}
 	}
 	if item.Revision != revision || item.Status == "completed" || item.Status == "cancelled" || item.Status == "review" {
 		return poolItem{}, errPoolConflict
@@ -249,12 +260,7 @@ func (h *Hub) reportPoolEvent(ctx context.Context, grant poolReportGrant, eventI
 	}
 	defer tx.Rollback()
 	if grant.CredentialHash != "" {
-		var actor string
-		err := tx.QueryRowContext(ctx, `SELECT bot_id FROM task_pool_bot_credentials WHERE token_hash=?`, grant.CredentialHash).Scan(&actor)
-		if errors.Is(err, sql.ErrNoRows) || err == nil && actor != grant.ActorID {
-			return poolItem{}, errPoolForbidden
-		}
-		if err != nil {
+		if err := verifyPoolCredential(ctx, tx, grant.ActorID, grant.CredentialHash); err != nil {
 			return poolItem{}, err
 		}
 	}

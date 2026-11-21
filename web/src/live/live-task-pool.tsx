@@ -194,7 +194,7 @@ function TaskPoolDetail({ id }: { id: string }) {
       <section aria-label="任务内容" className="space-y-3 rounded-xl border bg-card p-4">
         <p className="whitespace-pre-wrap break-words text-sm">{item.request}</p>
         {item.attachment_ids.length > 0 && <ul className="space-y-1 text-sm">{item.attachment_ids.map((attachment, index) => (
-          <li key={attachment}><a className="underline" href={liveApi.attachmentURL(attachment)} download>附件 {index + 1}</a></li>
+          <li key={attachment}><a className="underline" href={taskPoolApi.attachmentURL(item.id, attachment)} download>附件 {index + 1}</a></li>
         ))}</ul>}
         {item.delivery?.can_retry && <Button type="button" variant="outline" disabled={action.isPending} onClick={() => action.mutate({ item })}>重新发送通知</Button>}
         {canAssign && options.length > 0 && (

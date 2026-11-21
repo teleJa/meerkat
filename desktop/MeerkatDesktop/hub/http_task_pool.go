@@ -78,21 +78,26 @@ func (h *Hub) handlePoolTargets(w http.ResponseWriter, r *http.Request) {
 		writePoolError(w, err)
 		return
 	}
-	type targetOption struct {
-		Kind string `json:"kind"`
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
-	targets := make([]targetOption, 0, len(directory.Bots)+len(directory.Rooms))
+	writeJSON(w, http.StatusOK, map[string]any{"targets": directory.options()})
+}
+
+type poolTargetOption struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func (directory poolBotDirectory) options() []poolTargetOption {
+	targets := make([]poolTargetOption, 0, len(directory.Bots)+len(directory.Rooms))
 	for _, bot := range directory.Bots {
-		targets = append(targets, targetOption{"bot", bot.ID, bot.Name})
+		targets = append(targets, poolTargetOption{"bot", bot.ID, bot.Name})
 	}
 	for _, room := range directory.Rooms {
 		if _, enabled := directory.target("group", room.ID); enabled {
-			targets = append(targets, targetOption{"group", room.ID, room.Name})
+			targets = append(targets, poolTargetOption{"group", room.ID, room.Name})
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"targets": targets})
+	return targets
 }
 
 func (h *Hub) resolvePoolTarget(r *http.Request, request poolAssignmentRequest) (poolTarget, error) {
@@ -153,7 +158,7 @@ func (h *Hub) handleAssignPoolItem(w http.ResponseWriter, r *http.Request) {
 		writePoolError(w, err)
 		return
 	}
-	item, err := h.assignPoolItem(r.Context(), r.PathValue("id"), input.Revision, "user", target, time.Now())
+	item, err := h.assignPoolItem(r.Context(), r.PathValue("id"), input.Revision, "user", "", target, time.Now())
 	if err != nil {
 		writePoolError(w, err)
 		return

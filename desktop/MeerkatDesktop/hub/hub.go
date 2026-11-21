@@ -34,7 +34,6 @@ type Config struct {
 	AdminToken          string
 	TaskPoolBotDeviceID string
 	TaskPoolChiefBotID  string
-	TaskPoolBoardURL    string
 }
 
 type Hub struct {
