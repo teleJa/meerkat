@@ -271,7 +271,7 @@ func openDB(dbPath string) (*sql.DB, error) {
 			return nil, fmt.Errorf("%s: %w", pragma, err)
 		}
 	}
-	for _, statement := range strings.Split(schema, ";") {
+	for _, statement := range strings.Split(schema+taskPoolSchema, ";") {
 		statement = strings.TrimSpace(statement)
 		if statement == "" {
 			continue
