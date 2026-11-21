@@ -50,6 +50,12 @@ CREATE TABLE IF NOT EXISTS task_pool_deliveries (
 
 CREATE INDEX IF NOT EXISTS idx_task_pool_delivery_queue ON task_pool_deliveries(status, created_at);
 
+CREATE TABLE IF NOT EXISTS task_pool_bot_credentials (
+  bot_id TEXT PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS task_pool_runs (
   item_id TEXT NOT NULL REFERENCES task_pool_items(id),
   task_id TEXT NOT NULL REFERENCES tasks(id),

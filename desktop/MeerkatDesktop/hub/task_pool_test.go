@@ -81,6 +81,25 @@ func TestTaskPoolAssignmentAndReport(t *testing.T) {
 		t.Fatalf("deliver: %+v %v", item, err)
 	}
 	assertTaskPoolCounts(t, h, 1, 5, 3)
+	if _, err := h.reviewPoolItem(ctx, item.ID, item.Revision, "return", "", now); !errors.Is(err, errPoolInvalid) {
+		t.Fatalf("return without reason: %v", err)
+	}
+	if _, err := h.reviewPoolItem(ctx, item.ID, item.Revision-1, "approve", "", now); !errors.Is(err, errPoolConflict) {
+		t.Fatalf("review stale revision: %v", err)
+	}
+	item, err = h.reviewPoolItem(ctx, item.ID, item.Revision, "return", "补一张验收截图", now)
+	if err != nil || item.Status != "processing" || item.AssignmentRev != grant.AssignmentRev {
+		t.Fatalf("return: %+v %v", item, err)
+	}
+	assertTaskPoolCounts(t, h, 1, 6, 4)
+	item, err = h.reportPoolEvent(ctx, grant, "event-2", "delivered", poolEventBody{Note: "已补", Evidence: []string{"截图"}}, now)
+	if err != nil || item.Status != "review" {
+		t.Fatalf("deliver again: %+v %v", item, err)
+	}
+	item, err = h.reviewPoolItem(ctx, item.ID, item.Revision, "approve", "", now)
+	if err != nil || item.Status != "completed" {
+		t.Fatalf("approve: %+v %v", item, err)
+	}
 	var deviceTasks int
 	if err := db.QueryRow("SELECT COUNT(*) FROM tasks").Scan(&deviceTasks); err != nil || deviceTasks != 0 {
 		t.Fatalf("existing device tasks changed: %d %v", deviceTasks, err)

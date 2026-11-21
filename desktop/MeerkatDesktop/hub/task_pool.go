@@ -216,10 +216,11 @@ func (h *Hub) assignPoolItem(ctx context.Context, id string, revision int, actor
 
 // poolReportGrant is produced by the authenticated transport for a single assignment.
 type poolReportGrant struct {
-	ItemID        string
-	ActorID       string
-	AssignmentRev int
-	ExpiresAt     time.Time
+	ItemID         string
+	ActorID        string
+	AssignmentRev  int
+	ExpiresAt      time.Time
+	CredentialHash string
 }
 
 func (h *Hub) reportPoolEvent(ctx context.Context, grant poolReportGrant, eventID, kind string, body poolEventBody, now time.Time) (poolItem, error) {
@@ -247,6 +248,16 @@ func (h *Hub) reportPoolEvent(ctx context.Context, grant poolReportGrant, eventI
 		return poolItem{}, err
 	}
 	defer tx.Rollback()
+	if grant.CredentialHash != "" {
+		var actor string
+		err := tx.QueryRowContext(ctx, `SELECT bot_id FROM task_pool_bot_credentials WHERE token_hash=?`, grant.CredentialHash).Scan(&actor)
+		if errors.Is(err, sql.ErrNoRows) || err == nil && actor != grant.ActorID {
+			return poolItem{}, errPoolForbidden
+		}
+		if err != nil {
+			return poolItem{}, err
+		}
+	}
 	item, err := poolItemIn(ctx, tx, grant.ItemID)
 	if err != nil {
 		return poolItem{}, err
@@ -291,6 +302,60 @@ func (h *Hub) reportPoolEvent(ctx context.Context, grant poolReportGrant, eventI
 	if _, err := tx.ExecContext(ctx, `UPDATE task_pool_deliveries SET status='acknowledged',error_code=''
 		WHERE item_id=? AND assignment_rev=? AND status IN ('pending','sending','queued','uncertain','failed')`, item.ID, item.AssignmentRev); err != nil {
 		return poolItem{}, err
+	}
+	return item, tx.Commit()
+}
+
+// reviewPoolItem changes review state after the transport has verified the user.
+func (h *Hub) reviewPoolItem(ctx context.Context, id string, revision int, decision, note string, now time.Time) (poolItem, error) {
+	note = strings.TrimSpace(note)
+	if len(note) > 8192 || (decision == "return" && note == "") {
+		return poolItem{}, errPoolInvalid
+	}
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return poolItem{}, err
+	}
+	defer tx.Rollback()
+	item, err := poolItemIn(ctx, tx, id)
+	if err != nil {
+		return poolItem{}, err
+	}
+	if item.Revision != revision || item.Status == "cancelled" || item.Status == "completed" || (decision != "cancel" && item.Status != "review") {
+		return poolItem{}, errPoolConflict
+	}
+	var event string
+	switch decision {
+	case "approve":
+		item.Status, event = "completed", "approved"
+	case "return":
+		item.Status, event = "processing", "returned"
+	case "cancel":
+		item.Status, event = "cancelled", "cancelled"
+	default:
+		return poolItem{}, errPoolInvalid
+	}
+	payload, err := json.Marshal(poolEventBody{Note: note})
+	if err != nil {
+		return poolItem{}, err
+	}
+	if err := updatePoolStatus(ctx, tx, &item, now); err != nil {
+		return poolItem{}, err
+	}
+	eventID := event + ":" + randomHex(16)
+	if err := insertPoolEvent(ctx, tx, item, eventID, "user", event, payload, now); err != nil {
+		return poolItem{}, err
+	}
+	if decision == "return" {
+		if err := enqueuePoolDelivery(ctx, tx, item, "returned", eventID, item.AssigneeID, now); err != nil {
+			return poolItem{}, err
+		}
+	}
+	if decision == "cancel" {
+		if _, err := tx.ExecContext(ctx, `UPDATE task_pool_deliveries SET status='superseded'
+			WHERE item_id=? AND status IN ('pending','sending','queued','uncertain')`, item.ID); err != nil {
+			return poolItem{}, err
+		}
 	}
 	return item, tx.Commit()
 }

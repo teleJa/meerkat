@@ -67,6 +67,34 @@ func readPoolRequest(w http.ResponseWriter, r *http.Request, input any) bool {
 	return true
 }
 
+func (h *Hub) handlePoolTargets(w http.ResponseWriter, r *http.Request) {
+	client, err := h.taskPoolBotClient(h.cfg.TaskPoolBotDeviceID)
+	if err != nil {
+		writePoolError(w, err)
+		return
+	}
+	directory, err := client.directory(r.Context())
+	if err != nil {
+		writePoolError(w, err)
+		return
+	}
+	type targetOption struct {
+		Kind string `json:"kind"`
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	targets := make([]targetOption, 0, len(directory.Bots)+len(directory.Rooms))
+	for _, bot := range directory.Bots {
+		targets = append(targets, targetOption{"bot", bot.ID, bot.Name})
+	}
+	for _, room := range directory.Rooms {
+		if _, enabled := directory.target("group", room.ID); enabled {
+			targets = append(targets, targetOption{"group", room.ID, room.Name})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"targets": targets})
+}
+
 func (h *Hub) resolvePoolTarget(r *http.Request, request poolAssignmentRequest) (poolTarget, error) {
 	if request.Kind != "group" && request.Kind != "bot" || request.ID == "" {
 		return poolTarget{}, errPoolInvalid
