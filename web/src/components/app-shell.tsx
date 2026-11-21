@@ -116,6 +116,7 @@ function useBreadcrumb(): Crumb[] {
   }
   if (segments[1] === "settings") return [{ label: "设置" }];
   if (segments[1] === "board") return [{ label: "任务看板", to: "/live/board" }];
+  if (segments[1] === "task-pool") return [{ label: "任务看板", to: "/live/board" }, { label: segments[2] === "new" ? "新任务" : "任务详情" }];
   if (segments[1] === "sessions") return [{ label: "实时会话", to: "/live/sessions" }];
   const crumbs: Crumb[] = [{ label: "实时设备", to: "/live" }];
   if (segments[1] === "devices") crumbs.push({ label: "设备详情" });
@@ -213,13 +214,15 @@ export function AppShell() {
                 {liveNavItems.map((item) => {
                   // DSH 入口跟随上次打开的设备；列表页仍由详情页的「切换设备」进入。
                   const target = item.to === "/live/harness" ? harnessEntryPath() : item.to;
-                  const sectionActive = item.to === "/live/harness" && harnessSectionActive;
+                  const poolSectionActive = item.to === "/live/board" && location.pathname.startsWith("/live/task-pool/");
+                  const sectionActive = (item.to === "/live/harness" && harnessSectionActive) || poolSectionActive;
                   return (
                     <SidebarMenuItem key={item.to}>
                       <SidebarMenuButton asChild tooltip={item.label}>
                         <NavLink
                           to={target}
                           end={item.end}
+                          aria-current={poolSectionActive ? "location" : undefined}
                           className={({ isActive }) =>
                             cn(
                               "group-data-[active=true]:bg-sidebar-accent",
