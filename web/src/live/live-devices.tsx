@@ -26,7 +26,6 @@ import {
 } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/page-header";
 import { DeviceStatusBadge } from "@/components/status-badge";
-import { MetricRing } from "@/components/metric-ring";
 import { QrCode as QrCodeImage } from "@/components/qr-code";
 import { LiveGate } from "@/live/live-gate";
 import {
@@ -265,31 +264,21 @@ function LiveDeviceCard({ device }: { device: LiveDevice }) {
         </div>
       </CardHeader>
       <CardContent className="px-5 pb-4 pt-4">
-        <div className="flex items-start justify-between gap-2">
-          <MetricRing label="CPU" value={metrics?.cpu_pct ?? null} detail="整机 0–100%" stale={device.status !== "online"} size={64} />
-          <MetricRing
-            label="内存"
-            value={memPct}
-            detail={formatBytes(metrics?.mem_total_bytes ?? null)}
-            stale={device.status !== "online"}
-            size={64}
-          />
-          <MetricRing
-            label="磁盘"
-            value={diskPct}
-            detail={formatBytes(metrics?.disk_total_bytes ?? null)}
-            stale={device.status !== "online"}
-            size={64}
-          />
-          {gpuVisible ? (
-            <MetricRing
-              label="GPU"
-              value={metrics?.gpu_util_pct ?? null}
-              detail={metrics?.gpu_temp_c ? metrics.gpu_temp_c + "°C" : "nvidia-smi"}
-              stale={device.status !== "online"}
-              size={64}
-            />
-          ) : null}
+        <div className="space-y-2.5">
+          {[
+            { label: "CPU", value: metrics?.cpu_pct },
+            { label: "内存", value: memPct, detail: formatBytes(metrics?.mem_total_bytes ?? null) },
+            { label: "磁盘", value: diskPct, detail: formatBytes(metrics?.disk_total_bytes ?? null) },
+            ...(gpuVisible ? [{ label: "GPU", value: metrics?.gpu_util_pct, detail: metrics?.gpu_temp_c != null ? `${metrics.gpu_temp_c}°C` : undefined }] : []),
+          ].map(({ label, value, detail }) => (
+            <div key={label} title={detail} className="grid grid-cols-[2.5rem_1fr_3rem] items-center gap-3 text-xs">
+              <span>{label}</span>
+              <div aria-hidden="true" className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div className={device.status === "online" ? "h-full rounded-full bg-primary" : "h-full bg-muted-foreground"} style={{ width: `${Math.max(0, Math.min(100, value ?? 0))}%` }} />
+              </div>
+              <span className="text-right tabular-nums">{value == null ? "—" : `${Math.round(value)}%`}</span>
+            </div>
+          ))}
         </div>
         <Separator className="my-4" />
         <div className="grid grid-cols-3 gap-2 text-xs">

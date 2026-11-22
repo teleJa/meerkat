@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LiveGate } from "@/live/live-gate";
 import { EmptyState } from "@/live/live-shared";
-import { errorMessage, type LiveDevice } from "@/live/api";
+import { errorMessage, liveApi, type LiveDevice } from "@/live/api";
 import { DshDeviceCard } from "@/live/live-dsh-card";
 import { HARNESS_LIST_STATE, forgetHarnessDevice, readLastHarnessDevice, rememberHarnessDevice } from "@/live/last-harness-device";
 import { openExternal } from "@/lib/open-external";
@@ -38,7 +38,7 @@ export function PersistentHarnessDetail() {
   if (!deviceId) return null;
   return (
     <div className={active ? "min-h-0 flex-1" : "hidden"}>
-      <LiveHarnessContent deviceId={deviceId} />
+      <LiveHarnessContent key={deviceId} deviceId={deviceId} active={active} />
     </div>
   );
 }
@@ -111,7 +111,16 @@ function LiveHarnessIndex() {
   );
 }
 
-function LiveHarnessContent({ deviceId }: { deviceId: string }) {
+function LiveHarnessContent({ deviceId, active }: { deviceId: string; active: boolean }) {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const devices = useQuery({ queryKey: ["live", "devices"], queryFn: liveApi.devices, enabled: active, refetchInterval: active ? 15000 : false });
+  const managed = useQuery({
+    queryKey: ["live", "sessions", "managed"],
+    queryFn: () => liveApi.listSessions({ mode: "managed", limit: 100 }),
+    enabled: active && drawerOpen,
+    refetchInterval: active && drawerOpen ? 5000 : false,
+  });
+  const sessions = managed.data?.sessions.filter(session => session.device_id === deviceId && session.mode === "managed") ?? [];
   const [loaded, setLoaded] = useState(false);
   const localQuery = useQuery({
     queryKey: ["live", "local-device"],
@@ -145,21 +154,16 @@ function LiveHarnessContent({ deviceId }: { deviceId: string }) {
   return (
     <div className="flex h-[calc(100dvh-7.5rem)] min-h-[540px] flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card px-4 py-2.5">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            DSH
-            {deviceId === localDeviceId ? (
-              <span className="rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">本机</span>
-            ) : null}
-          </div>
-          <div className="truncate text-[11px] text-muted-foreground">
-            设备 {deviceId} · DSH 页面通过 Meerkat 同源代理加载
-            {proxyQuery.data && "desktopOrigin" in proxyQuery.data && localDeviceId && deviceId !== localDeviceId
-              ? " · 差异面板可在本机浏览器打开 HTML"
-              : null}
-          </div>
-        </div>
+        <nav aria-label="设备工作区" className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+          {(devices.data?.devices ?? []).filter(device => device.id === deviceId || (device.status === "online" && device.dsh?.status === "running")).map(device => (
+            <Link key={device.id} to={"/live/harness/" + encodeURIComponent(device.id)} aria-current={device.id === deviceId ? "page" : undefined}
+              className="shrink-0 rounded-lg px-3 py-2 text-sm hover:bg-muted aria-[current=page]:bg-accent aria-[current=page]:text-accent-foreground">
+              {device.name}{device.id === localDeviceId ? " · 本机" : ""}
+            </Link>
+          ))}
+        </nav>
         <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" aria-expanded={drawerOpen} aria-controls="managed-drawer" onClick={() => setDrawerOpen(open => !open)}>托管任务</Button>
           <Button variant="ghost" size="sm" asChild>
             <Link to="/live/harness" state={HARNESS_LIST_STATE}>切换设备</Link>
           </Button>
@@ -189,6 +193,7 @@ function LiveHarnessContent({ deviceId }: { deviceId: string }) {
         </div>
       </div>
 
+      <div className="relative flex min-h-0 flex-1 gap-3">
       {proxyQuery.isLoading ? (
         <Skeleton className="min-h-0 flex-1" />
       ) : proxyQuery.isError || !url ? (
@@ -225,6 +230,16 @@ function LiveHarnessContent({ deviceId }: { deviceId: string }) {
           ) : null}
         </div>
       )}
+        <aside id="managed-drawer" hidden={!drawerOpen} className="absolute inset-y-0 right-0 z-10 w-64 overflow-y-auto rounded-xl border bg-card p-4 shadow-md lg:static lg:shrink-0">
+          <h2 className="mb-3 text-sm font-semibold">当前设备的托管任务</h2>
+          {managed.isError ? <p role="alert">读取失败，请重新打开抽屉重试。</p> : managed.isLoading ? <p>正在读取…</p> : sessions.length === 0 ? <p className="text-sm text-muted-foreground">暂无托管任务会话</p> : sessions.map(session => (
+            <Link key={session.id} className="block rounded-lg border-b px-2 py-3 text-sm hover:bg-muted" to={"/live/sessions?session=" + encodeURIComponent(session.id)}>
+              <span className="block truncate">{session.cwd || session.id}</span>
+              <span className="text-xs text-muted-foreground">{session.turn_count} 轮 · 查看会话</span>
+            </Link>
+          ))}
+        </aside>
+      </div>
     </div>
   );
 }

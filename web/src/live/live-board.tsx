@@ -1,3 +1,4 @@
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, RefreshCw } from "lucide-react";
@@ -20,13 +21,14 @@ const columns: { key: string; label: string; hint: string; statuses: LiveTask["s
 export function LiveBoardPage() {
   return (
     <LiveGate>
-      <div className="space-y-6">
-        <TaskPoolBoard />
-        <details className="rounded-xl border bg-card p-4">
-          <summary className="cursor-pointer text-sm font-medium">设备执行记录</summary>
-          <div className="mt-4"><LiveBoardContent /></div>
-        </details>
-      </div>
+      <Tabs defaultValue="pool" className="gap-4">
+        <TabsList aria-label="看板视图">
+          <TabsTrigger value="devices">设备执行</TabsTrigger>
+          <TabsTrigger value="pool">任务池</TabsTrigger>
+        </TabsList>
+        <TabsContent value="pool"><TaskPoolBoard /></TabsContent>
+        <TabsContent value="devices"><LiveBoardContent /></TabsContent>
+      </Tabs>
     </LiveGate>
   );
 }

@@ -1427,6 +1427,7 @@ func buildUIHandler(dist fs.FS, proxy http.Handler) http.Handler {
 			setDesktopJSONHeader(w)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"name":            "meerkat-desktop",
+				"version":         appVersion,
 				"mode":            appCfg.Mode,
 				"center_url":      centerURL(),
 				"hub_url":         advertisedHubURL(),

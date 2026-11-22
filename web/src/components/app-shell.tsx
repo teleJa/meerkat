@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { useQuery } from "@tanstack/react-query";
 import { useTheme } from "@/lib/use-theme";
 import { cn } from "@/lib/utils";
 import { PersistentHarnessDetail } from "@/live/live-harness";
@@ -155,13 +155,6 @@ function Topbar() {
         }}
       />
       <div className="ml-auto flex items-center gap-1.5">
-        <span className="hidden items-center gap-1.5 text-xs text-muted-foreground md:flex">
-          <span className="relative flex size-1.5">
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-60" />
-            <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
-          </span>
-          实时数据
-        </span>
         <Button
           variant="ghost"
           size="icon"
@@ -171,10 +164,6 @@ function Topbar() {
         >
           {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
         </Button>
-        <Separator orientation="vertical" className="mx-1 h-4" />
-        <Avatar className="size-7">
-          <AvatarFallback className="bg-secondary text-[11px] font-semibold">B</AvatarFallback>
-        </Avatar>
         {IS_WINDOWS_DESKTOP ? <WindowControls /> : null}
       </div>
     </header>
@@ -183,6 +172,25 @@ function Topbar() {
 
 export function AppShell() {
   const location = useLocation();
+  const desktop = useQuery({
+    queryKey: ["workspace", "desktop-version"],
+    queryFn: async () => {
+      const response = await fetch("/desktop/health");
+      if (!response.ok) return null;
+      const data = await response.json();
+      return typeof data.version === "string" ? data.version : null;
+    },
+    staleTime: Infinity,
+  });
+  const hub = useQuery({
+    queryKey: ["workspace", "hub-health"],
+    queryFn: async () => {
+      const response = await fetch("/api/health", { cache: "no-store" });
+      if (!response.ok || (await response.json()).ok !== true) throw new Error("Hub 暂不可用");
+      return true;
+    },
+    refetchInterval: 15000,
+  });
   const harnessDetailActive = /^\/live\/harness\/[^/]+$/.test(location.pathname);
   const harnessSectionActive = location.pathname.startsWith("/live/harness");
   return (
@@ -262,32 +270,11 @@ export function AppShell() {
           </SidebarGroup>
         </SidebarContent>
         <SidebarFooter>
-          <div className="rounded-lg border bg-card p-2.5 text-[11px] leading-relaxed text-muted-foreground group-data-[collapsible=icon]:hidden">
-            <div className="flex items-center gap-1.5 font-medium text-foreground">
-              <span className="relative flex size-1.5">
-                <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-60" />
-                <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
-              </span>
-              实时数据
-            </div>
-            <div className="mt-0.5">中心 + Go Edge · 协议 v1</div>
-            <div className="mt-1.5">设备 · 任务 · 会话实时同步</div>
-          </div>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton size="lg" asChild>
-                <div className="cursor-default">
-                  <Avatar className="size-7">
-                    <AvatarFallback className="bg-secondary text-[11px] font-semibold">M</AvatarFallback>
-                  </Avatar>
-                  <div className="grid flex-1 text-left leading-tight">
-                    <span className="truncate text-xs font-medium">本机用户</span>
-                    <span className="truncate text-[10px] text-muted-foreground">单用户模式</span>
-                  </div>
-                </div>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
+          <Link to="/live/settings?section=about" className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs hover:bg-sidebar-accent" title="Hub 状态与 Meerkat 版本">
+            <span className={cn("size-2 shrink-0 rounded-full", hub.isSuccess ? "bg-emerald-600" : "bg-amber-600")} />
+            <span className="group-data-[collapsible=icon]:hidden">{hub.isSuccess ? "Hub 在线" : hub.isPending ? "连接中…" : "Hub 未连接"}</span>
+            <span className="ml-auto text-muted-foreground group-data-[collapsible=icon]:hidden">{desktop.data ? `v${desktop.data}` : ""}</span>
+          </Link>
         </SidebarFooter>
         <SidebarRail />
       </Sidebar>

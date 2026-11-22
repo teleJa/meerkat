@@ -134,6 +134,7 @@ function ReviewHTMLOpenSettings() {
 }
 
 const settingsSections = [
+  { id: "general", label: "常规", icon: Laptop },
   { id: "network", label: "网络", icon: Network },
   { id: "notifications", label: "通知", icon: Bell },
   { id: "about", label: "关于 Meerkat", icon: Globe2 },
@@ -155,7 +156,7 @@ export function LiveSettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedSection = searchParams.get("section");
   const selectedSection = settingsSections.find(section => section.id === requestedSection);
-  const currentSection = selectedSection?.id ?? "about";
+  const currentSection = selectedSection?.id ?? "general";
   const [status, setStatus] = useState<TSNetStatus>(EMPTY);
   const [edgeStatus, setEdgeStatus] = useState<EdgeStatus>(EMPTY);
   const [health, setHealth] = useState<DesktopHealth | null>(null);
@@ -299,8 +300,9 @@ export function LiveSettingsPage() {
         </nav>
 
         <div className="min-w-0 space-y-5">
-          <UpdateSettings />
-          {health ? <ReviewHTMLOpenSettings /> : null}
+          <div hidden={currentSection !== "about"}><UpdateSettings /></div>
+          <div id="settings-general" tabIndex={-1} hidden={currentSection !== "general"} className="space-y-5">
+            {health ? <ReviewHTMLOpenSettings /> : null}
           {health ? (
             <section data-testid="node-role-card" className="overflow-hidden rounded-xl border bg-card">
               <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
@@ -368,6 +370,8 @@ export function LiveSettingsPage() {
               </p>
             ) : null}
           </section>
+          </div>
+          <div id="settings-network" tabIndex={-1} hidden={currentSection !== "network"} className="space-y-5">
           {edgeStatus.enabled ? (
             <section className="rounded-xl border border-sky-200 bg-sky-50/40 p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -535,11 +539,7 @@ export function LiveSettingsPage() {
           </section>
 
           <MobileDevicesSection />
-          <div id="settings-notifications" tabIndex={-1} className="scroll-mt-20">
-            <TurnNotificationsSection />
-          </div>
-
-          <section id="settings-network" tabIndex={-1} className="scroll-mt-20 rounded-xl border bg-card p-5">
+          <section className="scroll-mt-20 rounded-xl border bg-card p-5">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-semibold">连接拓扑</h2>
@@ -589,6 +589,10 @@ export function LiveSettingsPage() {
               </ul>
             </div>
           </section>
+          </div>
+          <div id="settings-notifications" tabIndex={-1} hidden={currentSection !== "notifications"} className="scroll-mt-20">
+            <TurnNotificationsSection />
+          </div>
         </div>
       </div>
     </div>

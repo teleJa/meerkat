@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0b0c0f">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b0c0f">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f4f0">
 <title>Meerkat</title>
 <style>
   :root {
@@ -193,26 +194,26 @@
   @media (prefers-color-scheme: light) {
     :root {
       color-scheme: light;
-      --bg: #f4f5f7;
+      --bg: #f5f4f0;
       --card: #ffffff;
-      --card2: #f0f2f6;
-      --line: #e3e6ec;
+      --card2: #eeece6;
+      --line: #dedbd4;
       --ink: #111318;
       --muted: #667085;
-      --blue: #2563eb;
+      --blue: #aa4c19;
       --green: #0f9f6e;
       --amber: #b45309;
       --red: #d92d20;
     }
     body { background: var(--bg); color: var(--ink); }
-    .topbar { background: rgba(244,245,247,.94); }
-    .card { background: var(--card); }
+    .topbar { background: rgba(245,244,240,.95); }
+    .card { background: var(--card); box-shadow: 0 2px 8px rgba(30,25,15,.05); }
     .card.clickable { min-height: 84px; }
   .card.clickable:active { background: var(--card2); transform: scale(.995); }
     .empty { border-color: var(--line); }
     .tabbar { background: rgba(255,255,255,.97); }
     .tabbar button { color: var(--muted); }
-    .tabbar button.active { color: #1d4ed8; }
+    .tabbar button.active { color: var(--blue); }
     button.secondary { background: #e9edf3; color: var(--ink); }
     button.danger { background: #fee4e2; color: #b42318; }
     input[type=password], input[type=text] { background: #fff; color: var(--ink); border-color: var(--line); }
@@ -228,6 +229,9 @@
     .spinner { border-color: #d9dee7; border-top-color: var(--blue); }
     .toast { background: #111; color: #fff; }
   }
+  .tabbar button { touch-action: manipulation; user-select: none; }
+  .tabbar button.active .ticon { background: var(--card2); border-radius: 12px; width: 48px; margin-inline: auto; }
+  @media (pointer: coarse) { input, textarea { font-size: 16px; } }
   @media (min-width: 700px) { body { font-size: 15px; } main { padding: 22px; } }
 </style>
 </head>
@@ -388,7 +392,7 @@
   </section>
 </main>
 
-<nav id="tabbar" class="tabbar">
+<nav id="tabbar" class="tabbar" aria-label="主导航">
   <button data-tab="devices" class="active">
     <span class="ticon" aria-hidden="true">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1198,7 +1202,11 @@ function showView(name) {
     $(id).classList.toggle('hidden', id !== 'view-' + name);
   }
   const tab = name === 'detail' ? 'tasks' : name === 'dsh' ? '' : name;
-  for (const b of document.querySelectorAll('#tabbar button')) b.classList.toggle('active', b.dataset.tab === tab);
+  for (const b of document.querySelectorAll('#tabbar button')) {
+    b.classList.toggle('active', b.dataset.tab === tab);
+    if (b.dataset.tab === tab) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  }
   $('tabbar').classList.toggle('hidden', name === 'dsh' || name === 'detail');
   if (name === 'devices') void loadDevices();
   if (name === 'tasks') void loadTasks();
