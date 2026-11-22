@@ -63,7 +63,7 @@ func (c *androidClient) start() {
 		return
 	}
 	log.Printf("android client storage: %s", dataDir)
-	client, err := androidclient.New(dataDir, wailsSecureStore{})
+	client, err := androidclient.New(dataDir, wailsSecureStore{}, writeAndroidClipboard)
 	if err != nil {
 		c.err = err
 		return

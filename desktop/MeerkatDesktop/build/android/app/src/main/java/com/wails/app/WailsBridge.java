@@ -106,6 +106,8 @@ public class WailsBridge {
     // Native methods - implemented in Go
     private static native void nativeInit(WailsBridge bridge);
     private static native void nativeShutdown();
+    private native void nativeBindMeerkatClipboard();
+    private native void nativeUnbindMeerkatClipboard();
     private static native void nativeOnStart();
     private static native void nativeOnResume();
     private static native void nativeOnPause();
@@ -136,6 +138,7 @@ public class WailsBridge {
         }
         try {
             nativeInit(this);
+            nativeBindMeerkatClipboard();
             initialized = true;
             Log.i(TAG, "Wails bridge initialized");
         } catch (Exception e) {
@@ -151,6 +154,7 @@ public class WailsBridge {
             return;
         }
         try {
+            nativeUnbindMeerkatClipboard();
             nativeShutdown();
             initialized = false;
         } catch (Exception e) {
@@ -384,6 +388,18 @@ public class WailsBridge {
             cm.setPrimaryClip(ClipData.newPlainText("wails", text));
         } catch (Exception e) {
             Log.e(TAG, "setClipboardText failed", e);
+        }
+    }
+
+    private boolean setMeerkatClipboardText(String text) {
+        try {
+            ClipboardManager manager = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+            if (manager == null) return false;
+            manager.setPrimaryClip(ClipData.newPlainText("Meerkat", text));
+            return true;
+        } catch (Exception error) {
+            Log.w(TAG, "Meerkat clipboard write failed", error);
+            return false;
         }
     }
 
