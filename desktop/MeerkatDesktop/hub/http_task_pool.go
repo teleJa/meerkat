@@ -250,68 +250,82 @@ func readPoolSnapshot(r *http.Request, tx *sql.Tx, item poolItem, now time.Time)
 }
 
 func (h *Hub) handleListPool(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	now := time.Now()
-	tx, err := h.db.BeginTx(ctx, nil)
+	items, err := h.listPoolSnapshots(r)
 	if err != nil {
 		writePoolError(w, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (h *Hub) listPoolSnapshots(r *http.Request) ([]poolSnapshot, error) {
+	ctx := r.Context()
+	now := time.Now()
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
 	defer tx.Rollback()
 	rows, err := tx.QueryContext(ctx, `SELECT `+poolFields+` FROM task_pool_items ORDER BY rowid DESC`)
 	if err != nil {
-		writePoolError(w, err)
-		return
+		return nil, err
 	}
 	var items []poolItem
 	for rows.Next() {
 		item, err := scanPoolItem(rows)
 		if err != nil {
 			_ = rows.Close()
-			writePoolError(w, err)
-			return
+			return nil, err
 		}
 		items = append(items, item)
 	}
 	_ = rows.Close()
 	if err := rows.Err(); err != nil {
-		writePoolError(w, err)
-		return
+		return nil, err
 	}
 	snapshots := make([]poolSnapshot, 0, len(items))
 	for _, item := range items {
 		snapshot, err := readPoolSnapshot(r, tx, item, now)
 		if err != nil {
-			writePoolError(w, err)
-			return
+			return nil, err
 		}
 		snapshots = append(snapshots, snapshot)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": snapshots})
+	return snapshots, nil
+}
+
+type poolDetail struct {
+	Item   poolSnapshot       `json:"item"`
+	Events []poolHistoryEvent `json:"events"`
 }
 
 func (h *Hub) handlePoolDetail(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	tx, err := h.db.BeginTx(ctx, nil)
+	detail, err := h.readPoolDetail(r)
 	if err != nil {
 		writePoolError(w, err)
 		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+func (h *Hub) readPoolDetail(r *http.Request) (poolDetail, error) {
+	ctx := r.Context()
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return poolDetail{}, err
 	}
 	defer tx.Rollback()
 	item, err := poolItemIn(ctx, tx, r.PathValue("id"))
 	if err != nil {
-		writePoolError(w, err)
-		return
+		return poolDetail{}, err
 	}
 	snapshot, err := readPoolSnapshot(r, tx, item, time.Now())
 	if err != nil {
-		writePoolError(w, err)
-		return
+		return poolDetail{}, err
 	}
 	events, err := tx.QueryContext(ctx, `SELECT event_id,actor_id,assignment_rev,type,payload,at FROM task_pool_events WHERE item_id=? ORDER BY seq`, item.ID)
 	if err != nil {
-		writePoolError(w, err)
-		return
+		return poolDetail{}, err
 	}
 	defer events.Close()
 	history := []poolHistoryEvent{}
@@ -319,18 +333,15 @@ func (h *Hub) handlePoolDetail(w http.ResponseWriter, r *http.Request) {
 		var event poolHistoryEvent
 		var payload string
 		if err := events.Scan(&event.ID, &event.ActorID, &event.AssignmentRev, &event.Type, &payload, &event.At); err != nil {
-			writePoolError(w, err)
-			return
+			return poolDetail{}, err
 		}
 		if err := json.Unmarshal([]byte(payload), &event.Payload); err != nil {
-			writePoolError(w, err)
-			return
+			return poolDetail{}, err
 		}
 		history = append(history, event)
 	}
 	if err := events.Err(); err != nil {
-		writePoolError(w, err)
-		return
+		return poolDetail{}, err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"item": snapshot, "events": history})
+	return poolDetail{Item: snapshot, Events: history}, nil
 }

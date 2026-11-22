@@ -169,6 +169,16 @@ func TestTaskPoolDeliveryTimeoutAndRetry(t *testing.T) {
 	assertTaskPoolCounts(t, h, 1, 2, 2)
 }
 
+type poolResponseRecorder struct {
+	*httptest.ResponseRecorder
+	beforeWrite func()
+}
+
+func (w poolResponseRecorder) WriteHeader(status int) {
+	w.beforeWrite()
+	w.ResponseRecorder.WriteHeader(status)
+}
+
 func TestTaskPoolReadRoutes(t *testing.T) {
 	db, err := openDB(":memory:")
 	if err != nil {
@@ -185,7 +195,11 @@ func TestTaskPoolReadRoutes(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer "+credential)
 		}
 		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, req)
+		mux.ServeHTTP(poolResponseRecorder{w, func() {
+			if inUse := db.Stats().InUse; inUse != 0 {
+				t.Errorf("%s: %d database connections held while writing response", path, inUse)
+			}
+		}}, req)
 		return w
 	}
 	if response := request("/api/task-pool", ""); response.Code != http.StatusUnauthorized {
