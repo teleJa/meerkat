@@ -193,7 +193,7 @@ function NetworkOnboarding({ error, onRetry }: { error: string; onRetry: () => v
       </CardContent>
       <CardFooter className="flex flex-wrap gap-2">
         <Button asChild data-testid="network-settings-link">
-          <Link to="/live/settings">
+          <Link to="/live/settings?section=network">
             <Settings className="size-4" />
             打开网络设置
           </Link>

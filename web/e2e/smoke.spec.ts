@@ -67,7 +67,8 @@ test.describe("Meerkat 发布冒烟", () => {
     await expect(onboarding).toContainText("内嵌 Tailscale");
 
     await page.getByTestId("network-settings-link").click();
-    await expect(page).toHaveURL(/#\/live\/settings$/);
+    await expect(page).toHaveURL(/#\/live\/settings\?section=network$/);
+    await expect(page.locator("#settings-network")).toBeVisible();
   });
 
   test("接入设备弹窗：邀请码 + 二维码、复制与重新生成", async ({ page }) => {
@@ -131,7 +132,7 @@ test.describe("Meerkat 发布冒烟", () => {
       });
     });
 
-    await page.goto("/#/live/settings");
+    await page.goto("/#/live/settings?section=network");
     await expect(page.getByTestId("hub-tailscale-login")).toBeVisible();
     await expect(page.getByTestId("hub-tailscale-login")).toContainText("打开 Tailscale 登录页");
   });
@@ -210,7 +211,7 @@ test.describe("Meerkat 发布冒烟", () => {
     await page.getByRole("link", { name: "切换设备" }).first().click();
     await expect(page).toHaveURL(/#\/live\/harness$/);
     await expect(page.getByRole("heading", { name: "DSH" })).toBeVisible();
-    await expect(page.getByText("E2E Mac")).toBeVisible();
+    await expect(page.getByText("E2E Mac", { exact: true }).filter({ visible: true })).toHaveCount(1);
   });
 
   test("DSH iframe 在 Meerkat 路由切换后保持", async ({ page, request }) => {

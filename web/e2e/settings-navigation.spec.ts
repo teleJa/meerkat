@@ -25,9 +25,21 @@ test("settings navigation reveals and focuses each selected section", async ({ p
 });
 
 test("reopening update settings twice refocuses About in the current document", async ({ page }) => {
-  await page.goto("/#/live/settings");
+  await page.goto("/#/live/settings?section=about");
   const title = page.locator("#about-meerkat-title");
+  await expect(title).toBeFocused();
+  const bottom = page.locator("#about-meerkat").locator("[data-scroll-fixture]");
+  await page.locator("#about-meerkat").evaluate(section => {
+    const spacer = document.createElement("div");
+    spacer.style.height = "180vh";
+    const marker = document.createElement("div");
+    marker.dataset.scrollFixture = "";
+    marker.style.height = "1px";
+    section.append(spacer, marker);
+  });
   for (const nonce of [1, 2]) {
+    await bottom.scrollIntoViewIfNeeded();
+    await expect(title).not.toBeInViewport();
     await page.evaluate(value => { window.location.hash = `#/live/settings?section=about&open=${value}`; }, nonce);
     await expect(title).toBeFocused();
     await expect(title).toBeInViewport();
