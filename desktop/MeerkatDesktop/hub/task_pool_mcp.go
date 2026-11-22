@@ -64,7 +64,7 @@ var poolMCPTools = []map[string]any{
 		"inputSchema": map[string]any{"type": "object", "required": []string{"task_id"}, "properties": map[string]any{
 			"task_id": map[string]string{"type": "string"},
 		}}},
-	{"name": "report_progress", "description": "Report accepted, progress, blocked or delivered on a currently assigned task. Reuse event_id for the same report when retrying. Delivery requires evidence.",
+	{"name": "report_progress", "description": "Report accepted, progress, blocked or delivered on a currently assigned task. Use a new event_id for each new report. After a task is returned, submit the new delivery with a new event_id, even if the note and evidence are identical. Reuse event_id only when retrying that exact submission. Delivery requires evidence.",
 		"inputSchema": map[string]any{"type": "object", "required": []string{"task_id", "assignment_rev", "event_id", "kind", "note"}, "properties": map[string]any{
 			"task_id": map[string]string{"type": "string"}, "assignment_rev": map[string]string{"type": "integer"},
 			"event_id": map[string]string{"type": "string"}, "kind": map[string]any{"type": "string", "enum": []string{"accepted", "progress", "blocked", "delivered"}},
