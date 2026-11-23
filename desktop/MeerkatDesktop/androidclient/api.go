@@ -15,8 +15,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// ErrNoToken means the client has neither a mobile credential nor an admin token.
-var ErrNoToken = fmt.Errorf("尚未配对或保存凭证")
+// ErrNoToken means the client has no paired mobile credential.
+var ErrNoToken = fmt.Errorf("尚未配对，请先配对设备")
 
 // ErrCredentialUnreadable means Android Keystore could not decrypt the saved
 // credential. The client never falls back to the legacy plaintext token.

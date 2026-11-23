@@ -4,7 +4,7 @@ import "testing"
 
 func TestHubDraftSurvivesRestartWithoutRebindingToken(t *testing.T) {
 	dir, store := t.TempDir(), newFakeSecureStore()
-	active := Auth{Kind: AuthKindAdmin, Token: "test-token", HubURL: "http://a.example:7443"}
+	active := Auth{Kind: AuthKindMobile, CredentialID: "paired", Token: "test-token", HubURL: "http://a.example:7443"}
 	if err := SaveAuth(store, active); err != nil {
 		t.Fatal(err)
 	}

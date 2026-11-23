@@ -99,7 +99,10 @@ func New(dataDir string, store SecureStore, writeClipboard func(string) bool) (*
 		return nil, fmt.Errorf("open tsnet log: %w", err)
 	}
 	cfg, cfgErr := LoadConfig(dataDir)
-	auth, cfg, authErr := loadOrMigrateAuth(dataDir, cfg, store)
+	auth, _, authErr := LoadAuth(store)
+	if auth.HubURL != "" {
+		cfg.HubURL = auth.HubURL
+	}
 	c := &Client{
 		dataDir:        dataDir,
 		cfg:            cfg,
@@ -149,34 +152,8 @@ func (c *Client) Config() Config {
 	return c.cfg
 }
 
-// SaveToken stores a legacy admin token in Android Keystore-backed storage.
-// It remains available for compatibility, but the mobile pairing flow is the
-// recommended path.
-func (c *Client) SaveToken(token string) error {
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return fmt.Errorf("token is empty")
-	}
-	if len(token) > 4096 {
-		return fmt.Errorf("token is too long")
-	}
-	c.credentialMu.Lock()
-	defer c.credentialMu.Unlock()
-	previous, _ := c.Auth()
-	auth := Auth{
-		Kind: AuthKindAdmin, Token: token, Label: "admin token",
-		HubURL: c.Config().HubURL, ProxyPort: previous.ProxyPort,
-	}
-	if err := SaveAuth(c.store, auth); err != nil {
-		return fmt.Errorf("凭证不可读：%w", err)
-	}
-	c.setAuth(auth, nil)
-	_ = c.logf("credential: saved admin token len=%d", len(token))
-	return nil
-}
-
-// ClearToken removes the credential and keeps the active Hub address.
-func (c *Client) ClearToken() error {
+// Unpair removes the credential and keeps the active Hub address.
+func (c *Client) Unpair() error {
 	c.credentialMu.Lock()
 	defer c.credentialMu.Unlock()
 	previous, _ := c.Auth()
@@ -212,7 +189,6 @@ func (c *Client) setAuthLocked(auth Auth, authErr error) {
 		c.cfg.HubURL = auth.HubURL
 		c.state.HubAddr = hostFromURL(auth.HubURL)
 	}
-	c.cfg.AdminToken = ""
 	c.cfgMu.Unlock()
 	c.authFailure = ""
 	c.state.Configured = auth.Configured() && authErr == nil
@@ -428,7 +404,7 @@ func (c *Client) prepareProxy(hubURL string, preferredPort int, named bool) (*hu
 			req.Header.Del("Accept-Encoding")
 		}
 		// The Hub protects /harness-proxy and API routes; inject the current
-		// mobile/admin credential here so WebView requests and WebSocket
+		// mobile credential here so WebView requests and WebSocket
 		// upgrades never need to know it.
 		req.Header.Del("Authorization")
 		c.mu.Lock()
@@ -675,7 +651,7 @@ func tailFile(path string, max int64) string {
 }
 
 // Devices asks the Hub for /api/devices through the loopback proxy and returns
-// the response status and body (bounded). It uses the persisted admin token.
+// the response status and body (bounded). It uses the paired mobile credential.
 func (c *Client) Devices() (int, string) {
 	status, body, err := c.apiGET("/api/devices")
 	if err != nil {

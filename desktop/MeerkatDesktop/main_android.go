@@ -177,10 +177,8 @@ func foregroundText(state androidclient.State) string {
 
 func (c *androidClient) register(mux *http.ServeMux) {
 	mux.HandleFunc("/client/state", c.handleState)
-	mux.HandleFunc("/client/config", c.handleConfigStatus)
-	mux.HandleFunc("/client/config/clear", c.handleConfigClear)
-	mux.HandleFunc("/client/config/", c.handleConfigSet)
 	mux.HandleFunc("/client/pair/", c.handlePair)
+	mux.HandleFunc("POST /client/credential/unpair", c.handleUnpair)
 	mux.HandleFunc("/client/credential/rotate", c.handleCredentialRotate)
 	mux.HandleFunc("/client/health", c.handleHealth)
 	mux.HandleFunc("/client/devices", c.handleDevices)
@@ -189,7 +187,6 @@ func (c *androidClient) register(mux *http.ServeMux) {
 	mux.HandleFunc("/client/harness/", c.handleHarness)
 	mux.HandleFunc("/client/wsprobe/", c.handleWSProbe)
 	mux.HandleFunc("/client/open/", c.handleOpen)
-	mux.HandleFunc("/client/paste", c.handlePaste)
 	mux.HandleFunc("/client/copy-auth", c.handleCopyAuth)
 	mux.HandleFunc("/client/statusbar/", c.handleStatusBar)
 	mux.HandleFunc("/client/probe", c.handleProbe)
@@ -225,53 +222,15 @@ func (c *androidClient) handleState(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, c.client.Snapshot())
 }
 
-func (c *androidClient) handleConfigStatus(w http.ResponseWriter, _ *http.Request) {
+func (c *androidClient) handleUnpair(w http.ResponseWriter, _ *http.Request) {
 	if c.unavailable(w) {
 		return
 	}
-	cfg := c.client.Config()
-	state := c.client.Snapshot()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":                    true,
-		"configured":            state.Configured,
-		"hub_url":               cfg.HubURL,
-		"auth_kind":             state.AuthKind,
-		"auth_state":            state.AuthState,
-		"credential_id":         state.CredentialID,
-		"credential_label":      state.CredentialLabel,
-		"credential_expires_at": state.CredentialExpiresAt,
-		"credential_days":       state.CredentialDays,
-		"credential_scopes":     state.CredentialScopes,
-		"credential_error":      state.CredentialError,
-	})
-}
-
-func (c *androidClient) handleConfigSet(w http.ResponseWriter, r *http.Request) {
-	if c.unavailable(w) {
-		return
-	}
-	token, err := androidclient.DecodePathParam("/client/config", r.URL.Path)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "缺少或无效的 token"})
-		return
-	}
-	if err := c.client.SaveToken(token); err != nil {
-		c.client.Logf("config: save token failed: %v", err)
+	if err := c.client.Unpair(); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "configured": true})
-}
-
-func (c *androidClient) handleConfigClear(w http.ResponseWriter, _ *http.Request) {
-	if c.unavailable(w) {
-		return
-	}
-	if err := c.client.ClearToken(); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "configured": false})
+	writeJSON(w, http.StatusOK, c.client.Snapshot())
 }
 
 // writeClientError keeps network failures, missing credentials and Hub 401
@@ -285,7 +244,7 @@ func (c *androidClient) writeClientError(w http.ResponseWriter, prefix string, s
 		payload["message"] = err.Error()
 	case errors.Is(err, androidclient.ErrNoToken):
 		payload["error"] = "not_configured"
-		payload["message"] = "尚未配对或保存凭证"
+		payload["message"] = err.Error()
 	case errors.Is(err, androidclient.ErrCredentialUnreadable):
 		payload["error"] = "credential_unreadable"
 		payload["message"] = err.Error()
@@ -504,32 +463,6 @@ func (c *androidClient) handleOpen(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// handlePaste reads the native Android clipboard. WebView on Android 16
-// denies navigator.clipboard.readText even after a user gesture, so the M1
-// "粘贴" button goes through the activity's ClipboardManager instead.
-func (c *androidClient) handlePaste(w http.ResponseWriter, _ *http.Request) {
-	app := application.Get()
-	if app == nil || app.Clipboard == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "系统剪贴板不可用"})
-		return
-	}
-	text, ok := app.Clipboard.Text()
-	if !ok {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "系统不允许读取剪贴板"})
-		return
-	}
-	text = strings.TrimSpace(text)
-	if text == "" {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "剪贴板是空的"})
-		return
-	}
-	if len(text) > 4096 {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "剪贴板内容过长"})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "text": text})
-}
-
 // handleCopyAuth copies the current Tailscale auth URL using the native
 // clipboard, so it works even when navigator.clipboard.writeText is denied.
 func (c *androidClient) handleCopyAuth(w http.ResponseWriter, _ *http.Request) {
@@ -632,7 +565,11 @@ func (c *androidClient) handleDSHLog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-func (c *androidClient) handlePage(w http.ResponseWriter, _ *http.Request) {
+func (c *androidClient) handlePage(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/client/") {
+		http.NotFound(w, r)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write([]byte(clientPage))

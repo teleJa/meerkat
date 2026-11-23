@@ -20,15 +20,14 @@ const (
 	// CredentialStorageKey holds the encrypted Auth JSON. The value never
 	// reaches client-config.json.
 	CredentialStorageKey = "meerkat.mobile.credential.v1"
-	AuthKindAdmin        = "admin"
 	AuthKindMobile       = "mobile"
 	ScopeDevicesRead     = "devices:read"
 	ScopeTasksRead       = "tasks:read"
 	ScopeHarnessProxy    = "harness:proxy"
 )
 
-// Auth is the credential the client uses for Hub requests. Either a mobile
-// credential issued by pairing or a legacy admin token. The token itself only
+// Auth is the credential the client uses for Hub requests. It is issued by mobile
+// pairing. The token itself only
 // exists in memory and in Android Keystore-backed storage.
 type Auth struct {
 	Kind         string   `json:"kind"`
@@ -44,7 +43,7 @@ type Auth struct {
 }
 
 func (a Auth) Configured() bool {
-	return strings.TrimSpace(a.Token) != ""
+	return a.IsMobile() && strings.TrimSpace(a.Token) != ""
 }
 
 func (a Auth) IsMobile() bool {
@@ -52,8 +51,8 @@ func (a Auth) IsMobile() bool {
 }
 
 func (a Auth) HasScope(scope string) bool {
-	if a.Kind != AuthKindMobile {
-		return true
+	if !a.Configured() {
+		return false
 	}
 	for _, granted := range a.Scopes {
 		if granted == scope {
@@ -93,9 +92,6 @@ func (a Auth) AuthState(now time.Time) string {
 	if !a.Configured() {
 		return "none"
 	}
-	if !a.IsMobile() {
-		return "ok"
-	}
 	expiry, ok := a.ExpiresAtTime()
 	if !ok {
 		return "unknown"
@@ -127,14 +123,14 @@ func LoadAuth(store SecureStore) (Auth, bool, error) {
 	auth.Kind = strings.TrimSpace(auth.Kind)
 	auth.Token = strings.TrimSpace(auth.Token)
 	auth.CredentialID = strings.TrimSpace(auth.CredentialID)
+	if !auth.IsMobile() {
+		return Auth{HubURL: auth.HubURL, ProxyPort: auth.ProxyPort}, true, nil
+	}
 	if auth.Token == "" {
 		if auth.HubURL != "" {
 			return Auth{HubURL: auth.HubURL, ProxyPort: auth.ProxyPort}, true, nil
 		}
 		return Auth{}, true, fmt.Errorf("credential is empty")
-	}
-	if auth.Kind == "" {
-		auth.Kind = AuthKindAdmin
 	}
 	return auth, true, nil
 }
@@ -142,6 +138,9 @@ func LoadAuth(store SecureStore) (Auth, bool, error) {
 func SaveAuth(store SecureStore, auth Auth) error {
 	if store == nil {
 		return fmt.Errorf("secure storage unavailable")
+	}
+	if auth.Token != "" && !auth.IsMobile() {
+		return fmt.Errorf("invalid mobile credential")
 	}
 	if !auth.Configured() && auth.HubURL == "" {
 		return fmt.Errorf("credential is empty")
@@ -158,31 +157,4 @@ func DeleteAuth(store SecureStore) error {
 		return fmt.Errorf("secure storage unavailable")
 	}
 	return store.Delete(CredentialStorageKey)
-}
-
-// loadOrMigrateAuth reads the encrypted credential and performs the one-time
-// M2 plaintext migration. A migration failure is returned as an auth error so
-// callers never fall back to the plaintext token.
-func loadOrMigrateAuth(dataDir string, cfg Config, store SecureStore) (Auth, Config, error) {
-	auth, found, err := LoadAuth(store)
-	if err != nil {
-		return Auth{}, cfg, err
-	}
-	if !found && strings.TrimSpace(cfg.AdminToken) != "" {
-		auth = Auth{Kind: AuthKindAdmin, Token: cfg.AdminToken, Label: "legacy admin token"}
-		if err := SaveAuth(store, auth); err != nil {
-			return Auth{}, cfg, err
-		}
-		found = true
-	}
-	if found && strings.TrimSpace(cfg.AdminToken) != "" {
-		cfg.AdminToken = ""
-		if err := SaveConfig(dataDir, cfg); err != nil {
-			return Auth{}, cfg, err
-		}
-	}
-	if auth.HubURL != "" {
-		cfg.HubURL = auth.HubURL
-	}
-	return auth, cfg, nil
 }

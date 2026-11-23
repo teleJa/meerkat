@@ -369,25 +369,6 @@
 
     <div class="card">
       <div class="row" style="justify-content:space-between">
-        <h3 style="margin:0">Hub 鉴权（兼容）</h3>
-        <span id="authChip" class="chip">未配置</span>
-      </div>
-      <div class="muted" style="margin:7px 0 9px">admin token 拥有 Hub 全部权限，只用于旧版兼容或调试；日常请使用上面的设备配对。保存后会存入 Keystore。</div>
-      <div class="row">
-        <input id="tokenInput" class="grow" type="password" placeholder="粘贴 admin token"
-               autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
-        <button class="secondary" id="pasteBtn">粘贴</button>
-        <button class="secondary" id="showBtn">显示</button>
-      </div>
-      <div id="tokenHint" class="muted" style="margin-top:6px">未输入 token</div>
-      <div class="row" style="margin-top:9px">
-        <button id="saveTokenBtn">保存</button>
-        <button class="danger" id="clearTokenBtn">清除</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="row" style="justify-content:space-between">
         <h3 style="margin:0">日志</h3>
         <span class="muted">最近 4 KB</span>
       </div>
@@ -570,7 +551,6 @@ function setChip(node, text, tone) {
 }
 
 function credentialStateLabel() {
-  if (state.authKind === 'admin') return '兼容模式';
   const current = state.authState || (state.configured ? 'ok' : 'none');
   if (current === 'expiring') return (state.credentialDays == null ? '' : state.credentialDays + ' 天后过期');
   return ({
@@ -580,7 +560,6 @@ function credentialStateLabel() {
 }
 
 function credentialHint() {
-  if (state.authKind === 'admin') return '当前使用 admin token（全权限），建议改用设备配对';
   const current = state.authState || (state.configured ? 'ok' : 'none');
   if (current === 'none') return '尚未配对';
   if (current === 'ok') return '已配对 · 只读设备凭证，Hub 请求自动携带';
@@ -594,9 +573,8 @@ function credentialHint() {
 
 function updateAuthUI() {
   const current = state.authState || (state.configured ? 'ok' : 'none');
-  const adminCompat = state.authKind === 'admin';
   const bad = ['expired', 'revoked', 'invalid', 'unreadable'].includes(current);
-  const warn = current === 'expiring' || current === 'none' || adminCompat;
+  const warn = current === 'expiring' || current === 'none';
   setChip($('credChip'), credentialStateLabel(), bad ? 'bad' : warn ? 'warn' : 'ok');
   $('pairCodeHelp').classList.toggle('compact', state.authKind === 'mobile' && ['ok', 'expiring'].includes(current));
   $('credHint').textContent = credentialHint();
@@ -611,25 +589,11 @@ function updateAuthUI() {
   if (bad) {
     warning.textContent = state.credentialError || credentialHint();
     warning.classList.remove('hidden');
-  } else if (adminCompat) {
-    warning.textContent = '当前使用 admin token（拥有全部权限）。建议在 Hub 生成配对码，改用只读移动设备凭证。';
-    warning.classList.remove('hidden');
   } else if (current === 'expiring') {
     warning.textContent = '移动设备凭证将在 ' + (state.credentialDays == null ? '不到 7' : state.credentialDays) + ' 天后过期，请轮换或重新配对。';
     warning.classList.remove('hidden');
   } else {
     warning.classList.add('hidden');
-  }
-  const chip = $('authChip');
-  if (state.authKind === 'mobile') {
-    chip.textContent = '移动凭证';
-    chip.className = 'chip ok';
-  } else if (state.authKind === 'admin' && state.configured) {
-    chip.textContent = 'admin token';
-    chip.className = 'chip warn';
-  } else {
-    chip.textContent = '未配置';
-    chip.className = 'chip warn';
   }
 }
 
@@ -683,7 +647,6 @@ function updateNetUI() {
   state.credentialLastUsedAt = t.credential_last_used_at || '';
   state.credentialError = t.credential_error || '';
   updateAuthUI();
-  updateTokenHint();
 }
 
 async function refreshState() {
@@ -706,7 +669,7 @@ function renderDevices() {
   $('deviceCount').textContent = state.devices.length ? state.devices.length + ' 台' : '';
   if (!state.configured) {
     const empty = el('div', 'empty');
-    empty.innerHTML = '<b>先配对设备</b>在设置页输入 Hub 配对码，或保存 admin token 兼容凭据。<br><br>';
+    empty.innerHTML = '<b>先配对设备</b>在设置页输入 Hub 配对码完成配对。<br><br>';
     const btn = el('button', '', '去设置');
     btn.onclick = () => navigate('#/settings');
     empty.appendChild(btn);
@@ -816,7 +779,7 @@ function renderTasks() {
   $('taskCount').textContent = state.tasks.length ? state.tasks.length + ' 条' : '';
   if (!state.configured) {
     const empty = el('div', 'empty');
-    empty.innerHTML = '<b>先配对设备</b>在设置页输入 Hub 配对码，或保存 admin token 后加载任务。';
+    empty.innerHTML = '<b>先配对设备</b>在设置页输入 Hub 配对码完成配对后加载任务。';
     list.appendChild(empty);
     return;
   }
@@ -1067,32 +1030,6 @@ async function probeHarnessWS() {
   }
 }
 
-async function saveToken() {
-  const input = $('tokenInput');
-  const token = input.value.trim();
-  if (!token) { toast('先粘贴 admin token'); return; }
-  try {
-    const payload = await getJSON('/client/config/' + b64url(token));
-    if (!payload.ok) throw new Error(payload.error || '保存失败');
-    state.configured = true;
-    state.tsnet.configured = true;
-    state.authKind = 'admin';
-    state.authState = 'ok';
-    state.credentialId = '';
-    state.credentialExpiresAt = '';
-    state.credentialScopes = [];
-    state.devicesLoaded = false;
-    input.value = '';
-    updateNetUI();
-    updateAuthUI();
-    toast('token 已保存');
-    await loadDevices();
-    await loadTasks();
-  } catch (e) {
-    toast('保存失败：' + e.message);
-  }
-}
-
 const pairNoticeKey = 'meerkat.pair-success.v1';
 function clearPairNotice() {
   $('pairSuccess').classList.add('hidden');
@@ -1114,24 +1051,15 @@ function restorePairNotice() {
     if (Number.isFinite(age) && age >= 0 && age <= 30000 && typeof notice.hubAddr === 'string' && typeof notice.deviceName === 'string') showPairNotice(notice);
   } catch (_) { /* Ignore unavailable storage or an incomplete notice. */ }
 }
-async function clearToken() {
-  clearPairNotice();
+async function unpairDevice() {
   if (!confirm('解除配对并清除已保存的凭证？')) return;
   try {
-    await getJSON('/client/config/clear');
-    state.configured = false;
-    state.tsnet.configured = false;
-    state.authKind = '';
-    state.authState = 'none';
-    state.credentialId = '';
-    state.credentialExpiresAt = '';
-    state.credentialScopes = [];
-    state.credentialError = '';
+    state.tsnet = await getJSON('/client/credential/unpair', {method: 'POST'});
+    clearPairNotice();
     state.devices = [];
     state.tasks = [];
     state.devicesLoaded = false;
     updateNetUI();
-    updateAuthUI();
     renderDevices();
     renderTasks();
     toast('已解除配对');
@@ -1250,7 +1178,6 @@ async function pairDevice(event) {
     state.credentialError = '';
     state.devicesLoaded = false;
     $('pairCodeInput').value = '';
-    updateTokenHint();
     updateAuthUI();
     showPairNotice(notice);
     await refreshState();
@@ -1276,43 +1203,6 @@ async function rotateCredential() {
     toast('轮换失败：' + e.message);
   } finally {
     updateAuthUI();
-  }
-}
-
-async function pasteToken() {
-  const input = $('tokenInput');
-  // Android 16 WebView denies navigator.clipboard.readText, so prefer the
-  // activity's native ClipboardManager via /client/paste.
-  try {
-    const payload = await getJSON('/client/paste');
-    if (payload.ok && payload.text) {
-      input.value = payload.text.trim();
-      updateTokenHint();
-      input.focus();
-      return;
-    }
-  } catch (e) {}
-  try {
-    const text = await navigator.clipboard.readText();
-    if (!text) { toast('剪贴板是空的'); return; }
-    input.value = text.trim();
-    updateTokenHint();
-    input.focus();
-  } catch (e) {
-    toast('无法读取剪贴板，请长按输入框选择「粘贴」');
-  }
-}
-
-function updateTokenHint() {
-  const n = $('tokenInput').value.trim().length;
-  if (n > 0) {
-    $('tokenHint').textContent = '已输入 ' + n + ' 字符' + (state.configured ? '（保存后将替换现有凭证）' : '');
-  } else if (state.authKind === 'mobile') {
-    $('tokenHint').textContent = '已使用移动设备凭证；admin token 输入框可留空';
-  } else if (state.configured) {
-    $('tokenHint').textContent = '已保存（出于安全不显示明文）';
-  } else {
-    $('tokenHint').textContent = '未输入 token';
   }
 }
 
@@ -1465,8 +1355,6 @@ $('openAuthBtn2').addEventListener('click', openAuth);
 $('copyAuthBtn').addEventListener('click', copyAuth);
 $('copyAuthBtn2').addEventListener('click', copyAuth);
 $('probeBtn').addEventListener('click', probeHub);
-$('saveTokenBtn').addEventListener('click', saveToken);
-$('clearTokenBtn').addEventListener('click', clearToken);
 $('successDismiss').addEventListener('click', clearPairNotice);
 $('successDevices').addEventListener('click', () => { clearPairNotice(); navigate('#/devices'); });
 setupPairingScanner();
@@ -1478,15 +1366,7 @@ $('hubAddrInput').addEventListener('input', (event) => {
   showHubAddressError('');
 });
 $('rotateBtn').addEventListener('click', rotateCredential);
-$('unpairBtn').addEventListener('click', clearToken);
-$('pasteBtn').addEventListener('click', pasteToken);
-$('showBtn').addEventListener('click', () => {
-  const input = $('tokenInput');
-  input.type = input.type === 'password' ? 'text' : 'password';
-  $('showBtn').textContent = input.type === 'password' ? '显示' : '隐藏';
-});
-$('tokenInput').addEventListener('input', updateTokenHint);
-$('tokenInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveToken(); });
+$('unpairBtn').addEventListener('click', unpairDevice);
 window.addEventListener('hashchange', route);
 
 // Pull-to-refresh on the device list. A button also exists in the top bar.
@@ -1555,7 +1435,6 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('focus', () => { void refreshState(); });
 
-updateTokenHint();
 updateAuthUI();
 refreshState();
 setInterval(refreshState, 2000);

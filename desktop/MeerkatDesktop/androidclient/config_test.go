@@ -13,15 +13,11 @@ func TestConfigRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Configured() {
-		t.Fatal("fresh config should not be configured")
-	}
 	if cfg.HubURL != DefaultHubURL {
 		t.Fatalf("hub url = %q", cfg.HubURL)
 	}
 
 	cfg.HubURL = "  http://192.0.2.20:7443  "
-	cfg.AdminToken = "  test-token  "
 	if err := SaveConfig(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -31,9 +27,6 @@ func TestConfigRoundTrip(t *testing.T) {
 	}
 	if loaded.HubURL != "http://192.0.2.20:7443" {
 		t.Fatalf("hub url = %q", loaded.HubURL)
-	}
-	if loaded.AdminToken != "test-token" {
-		t.Fatalf("token = %q", loaded.AdminToken)
 	}
 	info, err := os.Stat(filepath.Join(dir, "client-config.json"))
 	if err != nil {
@@ -80,33 +73,6 @@ func TestParseHubAddress(t *testing.T) {
 	} {
 		if got, err := ParseHubAddress(input); got != "" || !errors.Is(err, ErrInvalidHubAddress) {
 			t.Errorf("ParseHubAddress(%q) = %q, %v; want invalid address", input, got, err)
-		}
-	}
-}
-
-func TestHubBindingRestoresFromSecureStorage(t *testing.T) {
-	dir := t.TempDir()
-	legacy := Config{HubURL: "http://legacy.example:7443"}
-	store := newFakeSecureStore()
-	const savedURL = "http://new.example:7443"
-	for _, wantAuth := range []Auth{
-		{Kind: AuthKindAdmin, Token: "legacy-test-token"},
-		{Kind: AuthKindMobile, Token: "paired-test-token", HubURL: savedURL, ProxyPort: 18924},
-		{HubURL: savedURL, ProxyPort: 18924},
-	} {
-		if err := SaveAuth(store, wantAuth); err != nil {
-			t.Fatal(err)
-		}
-		auth, config, err := loadOrMigrateAuth(dir, legacy, store)
-		if err != nil {
-			t.Fatal(err)
-		}
-		wantURL := wantAuth.HubURL
-		if wantURL == "" {
-			wantURL = legacy.HubURL
-		}
-		if config.HubURL != wantURL || auth.Token != wantAuth.Token || auth.ProxyPort != wantAuth.ProxyPort {
-			t.Errorf("restored wrong Hub binding for %q", wantAuth.Kind)
 		}
 	}
 }

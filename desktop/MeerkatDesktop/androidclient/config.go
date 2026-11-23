@@ -51,21 +51,13 @@ func ParseHubAddress(raw string) (string, error) {
 	return "http://" + net.JoinHostPort(host, strconv.FormatUint(portNumber, 10)), nil
 }
 
-// Config is the durable client configuration. The admin token is stored in the
-// app's private data directory (mode 0600); it is never compiled into the APK.
+// Config stores the active Hub address in the app’s private directory.
 type Config struct {
-	HubURL     string `json:"hub_url,omitempty"`
-	AdminToken string `json:"admin_token,omitempty"`
-}
-
-// Configured reports whether the client has an admin token to call the Hub.
-func (c Config) Configured() bool {
-	return strings.TrimSpace(c.AdminToken) != ""
+	HubURL string `json:"hub_url,omitempty"`
 }
 
 func normalizeConfig(cfg Config) Config {
 	cfg.HubURL = strings.TrimSpace(cfg.HubURL)
-	cfg.AdminToken = strings.TrimSpace(cfg.AdminToken)
 	if cfg.HubURL == "" {
 		cfg.HubURL = DefaultHubURL
 	}
@@ -116,7 +108,7 @@ func SaveConfig(dataDir string, cfg Config) error {
 	return os.Chmod(ConfigPath(dataDir), 0o600)
 }
 
-// ClearConfig removes the stored token and hub override.
+// ClearConfig removes the hub override.
 func ClearConfig(dataDir string) error {
 	err := os.Remove(ConfigPath(dataDir))
 	if errors.Is(err, os.ErrNotExist) {

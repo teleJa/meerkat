@@ -3,8 +3,6 @@ package androidclient
 import (
 	"errors"
 	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -42,52 +40,39 @@ func (s *fakeSecureStore) Delete(key string) error {
 	return nil
 }
 
-func TestLegacyTokenMigratesAndPlaintextIsRemoved(t *testing.T) {
+func TestLegacyCredentialsAreIgnored(t *testing.T) {
 	dir := t.TempDir()
-	if err := SaveConfig(dir, Config{HubURL: "http://hub:7443", AdminToken: "legacy-secret"}); err != nil {
+	if err := os.WriteFile(ConfigPath(dir), []byte(`{"hub_url":"http://hub:7443","admin_token":"obsolete"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	store := newFakeSecureStore()
 	cfg, err := LoadConfig(dir)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || cfg.HubURL != "http://hub:7443" {
+		t.Fatalf("legacy configuration: %+v, %v", cfg, err)
 	}
-	auth, migrated, err := loadOrMigrateAuth(dir, cfg, store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if migrated.AdminToken != "" {
-		t.Fatalf("plaintext token still in config: %q", migrated.AdminToken)
-	}
-	if auth.Kind != AuthKindAdmin || auth.Token != "legacy-secret" {
-		t.Fatalf("auth = %+v", auth)
-	}
-	raw, err := os.ReadFile(filepath.Join(dir, "client-config.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "legacy-secret") {
-		t.Fatalf("plaintext token remains in %s: %s", ConfigPath(dir), raw)
-	}
-	if _, found, err := LoadAuth(store); err != nil || !found {
-		t.Fatalf("secure auth missing: found=%v err=%v", found, err)
+	for _, kind := range []string{"admin", "", "unknown"} {
+		store := newFakeSecureStore()
+		raw := `{"kind":"` + kind + `","token":"obsolete","hub_url":"http://saved:7443","proxy_port":18924}`
+		store.values[CredentialStorageKey] = raw
+		auth, found, err := LoadAuth(store)
+		if err != nil || !found || auth.Token != "" || auth.AuthState(time.Now()) != "none" || auth.HasScope(ScopeDevicesRead) || auth.HubURL != "http://saved:7443" || auth.ProxyPort != 18924 || store.values[CredentialStorageKey] != raw {
+			t.Fatalf("unexpected legacy state for kind %q", kind)
+		}
 	}
 }
 
-func TestSecureStoreFailureNeverFallsBackToPlaintext(t *testing.T) {
-	dir := t.TempDir()
-	if err := SaveConfig(dir, Config{AdminToken: "legacy-secret"}); err != nil {
+func TestPairedCredentialRoundTrip(t *testing.T) {
+	store := newFakeSecureStore()
+	want := Auth{Kind: AuthKindMobile, CredentialID: "paired", Token: "mobile", HubURL: "http://paired:7443", ProxyPort: 18924, Scopes: []string{ScopeDevicesRead}}
+	if err := SaveAuth(store, want); err != nil {
 		t.Fatal(err)
 	}
-	store := newFakeSecureStore()
-	store.err = errors.New("keystore unavailable")
-	cfg, _ := LoadConfig(dir)
-	auth, _, err := loadOrMigrateAuth(dir, cfg, store)
-	if err == nil {
-		t.Fatal("expected migration failure")
+	got, found, err := LoadAuth(store)
+	if err != nil || !found || !got.Configured() || got.Token != want.Token || got.HubURL != want.HubURL || got.ProxyPort != want.ProxyPort || !got.HasScope(ScopeDevicesRead) {
+		t.Fatal("paired credential not restored")
 	}
-	if auth.Configured() {
-		t.Fatalf("must not return plaintext auth: %+v", auth)
+	store.err = errors.New("keystore unavailable")
+	if auth, _, err := LoadAuth(store); err == nil || auth.Configured() {
+		t.Fatal("unavailable keystore must fail closed")
 	}
 }
 
