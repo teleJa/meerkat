@@ -57,12 +57,25 @@ func runMobileUpdate(action, dir, envelope string, current int64, sdk int) (mobi
 		return result, fmt.Errorf("此构建未配置更新公钥")
 	}
 	var m update.Manifest
+	var cached struct {
+		ReleaseID int64           `json:"releaseId"`
+		Signed    json.RawMessage `json:"signed"`
+	}
 	if action == "check" {
 		var data []byte
-		data, m, err = update.FetchRelease(androidUpdateURL, key)
-		result.Envelope = data
+		data, m, cached.ReleaseID, err = update.FetchRelease(androidUpdateURL, key)
+		if err == nil {
+			cached.Signed = data
+			result.Envelope, err = json.Marshal(cached)
+		}
 	} else {
-		m, err = update.Parse([]byte(envelope), key)
+		if err = json.Unmarshal([]byte(envelope), &cached); err != nil {
+			return result, err
+		}
+		if cached.Signed == nil {
+			cached.Signed = json.RawMessage(envelope)
+		}
+		m, err = update.Parse(cached.Signed, key)
 	}
 	if err != nil {
 		return result, err
@@ -89,7 +102,7 @@ func runMobileUpdate(action, dir, envelope string, current int64, sdk int) (mobi
 		if ctx == nil {
 			return result, fmt.Errorf("下载尚未开始")
 		}
-		p.URL, err = update.ReleasePackageURL(ctx, androidUpdateURL, m.Version, p.URL)
+		p.URL, err = update.ReleasePackageURL(ctx, androidUpdateURL, m.Version, p.URL, cached.ReleaseID)
 		if err != nil {
 			return result, err
 		}

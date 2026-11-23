@@ -13,6 +13,7 @@ import (
 )
 
 type releaseInfo struct {
+	ID     int64  `json:"id"`
 	Tag    string `json:"tag_name"`
 	Assets []struct {
 		ID   int64  `json:"id"`
@@ -48,27 +49,30 @@ func (release releaseInfo) asset(base, name string) (string, error) {
 	return "", fmt.Errorf("发布 %s 缺少 %s", release.Tag, name)
 }
 
-func FetchRelease(base string, key ed25519.PublicKey) ([]byte, Manifest, error) {
+func FetchRelease(base string, key ed25519.PublicKey) ([]byte, Manifest, int64, error) {
 	release, err := readRelease(context.Background(), base+"/latest")
 	if err != nil {
-		return nil, Manifest{}, err
+		return nil, Manifest{}, 0, err
 	}
 	endpoint, err := release.asset(base, "latest.json")
 	if err != nil {
-		return nil, Manifest{}, err
+		return nil, Manifest{}, 0, err
 	}
 	data, m, err := Fetch(endpoint, key)
 	if err != nil {
-		return nil, Manifest{}, err
+		return nil, Manifest{}, 0, err
 	}
 	if release.Tag != "v"+m.Version {
-		return nil, Manifest{}, fmt.Errorf("发布标签与签名清单版本不符")
+		return nil, Manifest{}, 0, fmt.Errorf("发布标签与签名清单版本不符")
 	}
-	return data, m, nil
+	if release.ID <= 0 {
+		return nil, Manifest{}, 0, fmt.Errorf("发布记录缺少有效 ID")
+	}
+	return data, m, release.ID, nil
 }
 
 // Resolve by the signed version even if another release became latest after the check.
-func ReleasePackageURL(ctx context.Context, base, version, signedURL string) (string, error) {
+func ReleasePackageURL(ctx context.Context, base, version, signedURL string, expectedID int64) (string, error) {
 	u, err := parseURL(signedURL)
 	if err != nil {
 		return "", err
@@ -83,6 +87,9 @@ func ReleasePackageURL(ctx context.Context, base, version, signedURL string) (st
 	}
 	if release.Tag != tag {
 		return "", fmt.Errorf("发布标签与签名清单版本不符")
+	}
+	if expectedID <= 0 || release.ID != expectedID {
+		return "", fmt.Errorf("发布记录已变化，请重新检查更新")
 	}
 	return release.asset(base, path.Base(u.Path))
 }
