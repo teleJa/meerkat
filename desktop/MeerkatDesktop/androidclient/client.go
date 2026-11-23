@@ -8,6 +8,7 @@ package androidclient
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -64,6 +65,7 @@ type State struct {
 type Client struct {
 	dataDir        string
 	mu             sync.Mutex
+	credentialMu   sync.Mutex // serializes persistent pairing, rotation and token changes
 	cfgMu          sync.RWMutex
 	cfg            Config
 	auth           Auth
@@ -71,6 +73,8 @@ type Client struct {
 	authFailure    string
 	store          SecureStore
 	server         *tsnet.Server
+	dialHub        func(context.Context, string, string) (net.Conn, error)
+	proxy          *hubProxy
 	state          State
 	dshVersion     string
 	dshCommit      string
@@ -148,31 +152,31 @@ func (c *Client) SaveToken(token string) error {
 	if len(token) > 4096 {
 		return fmt.Errorf("token is too long")
 	}
-	auth := Auth{Kind: AuthKindAdmin, Token: token, Label: "admin token"}
+	c.credentialMu.Lock()
+	defer c.credentialMu.Unlock()
+	previous, _ := c.Auth()
+	auth := Auth{
+		Kind: AuthKindAdmin, Token: token, Label: "admin token",
+		HubURL: c.Config().HubURL, ProxyPort: previous.ProxyPort,
+	}
 	if err := SaveAuth(c.store, auth); err != nil {
 		return fmt.Errorf("凭证不可读：%w", err)
 	}
 	c.setAuth(auth, nil)
-	c.cfgMu.Lock()
-	cfg := c.cfg
-	cfg.AdminToken = ""
-	if err := SaveConfig(c.dataDir, cfg); err != nil {
-		c.cfgMu.Unlock()
-		return err
-	}
-	c.cfg = normalizeConfig(cfg)
-	c.cfgMu.Unlock()
 	_ = c.logf("credential: saved admin token len=%d", len(token))
 	return nil
 }
 
-// ClearToken removes the encrypted credential. The Hub URL stays in the
-// plaintext config because it is not secret.
+// ClearToken removes the credential and keeps the active Hub address.
 func (c *Client) ClearToken() error {
-	if err := DeleteAuth(c.store); err != nil {
+	c.credentialMu.Lock()
+	defer c.credentialMu.Unlock()
+	previous, _ := c.Auth()
+	auth := Auth{HubURL: c.Config().HubURL, ProxyPort: previous.ProxyPort}
+	if err := SaveAuth(c.store, auth); err != nil {
 		return err
 	}
-	c.setAuth(Auth{}, nil)
+	c.setAuth(auth, nil)
 	_ = c.logf("credential: cleared")
 	return nil
 }
@@ -187,15 +191,24 @@ func (c *Client) Auth() (Auth, error) {
 }
 
 func (c *Client) setAuth(auth Auth, authErr error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.setAuthLocked(auth, authErr)
+}
+
+func (c *Client) setAuthLocked(auth Auth, authErr error) {
 	c.cfgMu.Lock()
 	c.auth = auth
 	c.authErr = authErr
+	if auth.HubURL != "" {
+		c.cfg.HubURL = auth.HubURL
+		c.state.HubAddr = hostFromURL(auth.HubURL)
+	}
+	c.cfg.AdminToken = ""
 	c.cfgMu.Unlock()
-	c.mu.Lock()
 	c.authFailure = ""
 	c.state.Configured = auth.Configured() && authErr == nil
 	c.refreshAuthStateLocked()
-	c.mu.Unlock()
 }
 
 // refreshAuthStateLocked must be called with c.mu held.
@@ -274,6 +287,7 @@ func (c *Client) Start() {
 	}
 	c.mu.Lock()
 	c.server = server
+	c.dialHub = server.Dial
 	c.mu.Unlock()
 	if err := server.Start(); err != nil {
 		c.setError(fmt.Errorf("tsnet start: %w", err))
@@ -324,40 +338,63 @@ func (c *Client) monitor(logger *log.Logger) {
 	}
 }
 
+type hubProxy struct {
+	listener  net.Listener
+	server    *http.Server
+	transport *http.Transport
+	cancel    context.CancelFunc
+	host      string
+	port      int
+}
+
+func (p *hubProxy) close() {
+	p.cancel()
+	_ = p.server.Close()
+	_ = p.listener.Close()
+	p.transport.CloseIdleConnections()
+}
+
 func (c *Client) startProxy() {
-	// 端口必须跨冷启固定：WebView 的磁盘缓存和 Local Storage 都按 origin 分桶，
-	// 每次随机端口等于每次换一个空桶，缓存永远命中不了（见 proxy_port.go）。
-	listener, port, fixed, err := listenProxyPort(
-		net.Listen, proxyPortCandidates(), proxyListenAttempts, proxyListenRetryDelay, nil,
-	)
+	c.credentialMu.Lock()
+	defer c.credentialMu.Unlock()
+	auth, _ := c.Auth()
+	instance, err := c.prepareProxy(c.Config().HubURL, auth.ProxyPort, auth.ProxyPort > 0)
 	if err != nil {
-		c.setError(fmt.Errorf("proxy listen: %w", err))
+		c.setError(err)
 		return
 	}
-	if fixed {
-		_ = c.logf("loopback proxy: 固定端口 %d（缓存 origin 跨冷启稳定）", port)
-	} else {
-		// 固定端口全被占，退化到随机端口：本次 origin 会变，磁盘缓存与
-		// Local Storage 都命中不了。真机上发现问题时先看这行。
-		_ = c.logf("loopback proxy: 固定端口 %d-%d 全部占用，退化到随机端口 %d（本次缓存不会命中）",
-			fixedProxyPort, fixedProxyPort+proxyPortFallbacks-1, port)
-	}
-	hubURL := c.Config().HubURL
-	if hubURL == "" {
-		hubURL = DefaultHubURL
-	}
+	c.mu.Lock()
+	c.activateProxyLocked(instance)
+	c.mu.Unlock()
+}
+
+func (c *Client) prepareProxy(hubURL string, preferredPort int, named bool) (*hubProxy, error) {
 	target, err := url.Parse(hubURL)
-	if err != nil || target.Host == "" {
-		c.setError(fmt.Errorf("invalid hub url %q", hubURL))
-		return
+	if err != nil || target.Host == "" || (target.Scheme != "http" && target.Scheme != "https") {
+		return nil, fmt.Errorf("Hub 地址无效")
 	}
-	clipboard := &clipboardBridge{host: listener.Addr().String(), write: c.writeClipboard, log: c.Logf}
+	// Keep the preferred port stable across cold starts. A new Hub also
+	// gets a distinct browser hostname so its cookies and storage are isolated.
+	ports := proxyPortCandidates()
+	if preferredPort > 0 && preferredPort <= 65535 {
+		ports = append([]int{preferredPort}, ports...)
+	}
+	listener, port, fixed, err := listenProxyPort(net.Listen, ports, proxyListenAttempts, proxyListenRetryDelay, nil)
+	if err != nil {
+		return nil, fmt.Errorf("无法启动本机代理：%w", err)
+	}
+	_ = c.logf("loopback proxy: port=%d fixed=%t", port, fixed)
+	host := listener.Addr().String()
+	if named {
+		sum := sha256.Sum256([]byte(hubURL))
+		host = net.JoinHostPort(fmt.Sprintf("hub-%x.localhost", sum[:16]), strconv.Itoa(port))
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	instance := &hubProxy{listener: listener, cancel: cancel, host: host, port: port}
+	clipboard := &clipboardBridge{host: host, write: c.writeClipboard, log: c.Logf}
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	transport := &http.Transport{
-		Proxy: nil,
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return c.server.Dial(ctx, network, addr)
-		},
+		DialContext:     c.dialHub,
 		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 		// 关掉 Transport 的透明 gzip：否则 Go 会自己加 Accept-Encoding、自己解压，
 		// 再把这个头摘掉，注入逻辑就分不清「上游没压缩」和「Go 已经解过了」。
@@ -365,6 +402,7 @@ func (c *Client) startProxy() {
 		// 压缩后的字节直接回到手机上（见下面的 Director）。
 		DisableCompression: true,
 	}
+	instance.transport = transport
 	proxy.Transport = transport
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
@@ -384,9 +422,14 @@ func (c *Client) startProxy() {
 		// The Hub protects /harness-proxy and API routes; inject the current
 		// mobile/admin credential here so WebView requests and WebSocket
 		// upgrades never need to know it.
-		if auth, err := c.Auth(); err == nil && auth.Configured() {
-			req.Header.Set("Authorization", "Bearer "+auth.Token)
+		req.Header.Del("Authorization")
+		c.mu.Lock()
+		if c.proxy == instance {
+			if auth, err := c.Auth(); err == nil && auth.Configured() {
+				req.Header.Set("Authorization", "Bearer "+auth.Token)
+			}
 		}
+		c.mu.Unlock()
 	}
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		if resp == nil || !strings.Contains(resp.Request.URL.Path, "/harness-proxy/") {
@@ -448,27 +491,74 @@ func (c *Client) startProxy() {
 		resp.Header.Del("ETag")
 		resp.Header.Del("Last-Modified")
 		c.mu.Lock()
-		c.dshVersion = result.Version
-		c.dshCommit = result.Commit
-		c.state.DSHVersion = result.Version
-		c.state.DSHCommit = result.Commit
+		if c.proxy == instance {
+			c.dshVersion = result.Version
+			c.dshCommit = result.Commit
+			c.state.DSHVersion = result.Version
+			c.state.DSHCommit = result.Commit
+		}
 		c.mu.Unlock()
 		c.Logf("dsh css: injected path=%s bytes=%d version=%s commit=%s", resp.Request.URL.Path, len(result.Body), result.Version, result.Commit)
 		return nil
 	}
 	// The Hub is plain HTTP on the tailnet. Force HTTP/1.1 so the reverse
 	// proxy keeps DSH WebSocket upgrades working.
-	proxy.Transport.(*http.Transport).ForceAttemptHTTP2 = false
-	server := &http.Server{Handler: clipboard.proxy(proxy), ReadHeaderTimeout: 10 * time.Second}
+	handler := clipboard.proxy(proxy)
+	instance.server = &http.Server{
+		ReadHeaderTimeout: 10 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Host != instance.host {
+				http.NotFound(w, r)
+				return
+			}
+			// A retired Hub page must not issue requests to the new Hub via
+			// its browser origin. Go callers do not send Fetch Metadata.
+			if named {
+				origin := r.Header.Get("Origin")
+				site := r.Header.Get("Sec-Fetch-Site")
+				if (origin != "" && origin != "http://"+instance.host) ||
+					(site != "" && site != "same-origin" && !isClipboardNavigation(r)) {
+					http.Error(w, "unexpected request origin", http.StatusForbidden)
+					return
+				}
+			}
+			handler.ServeHTTP(w, r)
+		}),
+	}
+	return instance, nil
+}
+
+func (c *Client) activateProxyLocked(instance *hubProxy) {
+	c.proxy = instance
+	c.state.ProxyURL = "http://" + instance.host
 	go func() {
-		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			c.setError(fmt.Errorf("proxy serve: %w", err))
+		if err := instance.server.Serve(instance.listener); err != nil && err != http.ErrServerClosed {
+			c.Logf("proxy serve: %v", err)
 		}
 	}()
-	c.mu.Lock()
-	c.state.ProxyURL = "http://" + listener.Addr().String()
-	c.mu.Unlock()
-	_ = c.logf("loopback proxy: http://%s -> %s", listener.Addr().String(), hubURL)
+}
+
+// Dial the proxy aliases directly for native probes. WebView resolves
+// *.localhost to loopback itself.
+func dialLoopbackProxy(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || (host != "127.0.0.1" && !strings.HasSuffix(host, ".localhost")) {
+		return nil, fmt.Errorf("invalid loopback proxy address")
+	}
+	return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
+}
+
+var loopbackTransport = &http.Transport{DialContext: dialLoopbackProxy}
+
+func loopbackHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Transport: loopbackTransport,
+		Timeout:   timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 // registerAndroidInterfaces gives tsnet a synthetic interface list. Android
@@ -598,8 +688,7 @@ func (c *Client) Probe() string {
 		return "tsnet not ready"
 	}
 	var out strings.Builder
-	client := &http.Client{Timeout: 15 * time.Second}
-	response, err := client.Get(proxyURL + "/api/health")
+	response, err := loopbackHTTPClient(15 * time.Second).Get(proxyURL + "/api/health")
 	if err != nil {
 		fmt.Fprintf(&out, "HTTP /api/health: ERROR %v\n", err)
 	} else {

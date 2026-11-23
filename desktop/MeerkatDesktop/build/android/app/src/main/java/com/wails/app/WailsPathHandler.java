@@ -31,7 +31,9 @@ public class WailsPathHandler implements WebViewAssetLoader.PathHandler {
     @Nullable
     @Override
     public WebResourceResponse handle(@NonNull String path) {
-        if (DEBUG) Log.d(TAG, "Handling path: " + path);
+        boolean pairing = path.startsWith("client/pair/") || path.startsWith("/client/pair/");
+        String loggedPath = pairing ? "/client/pair/…" : path;
+        if (DEBUG) Log.d(TAG, "Handling path: " + loggedPath);
 
         // Normalize path
         if (path.isEmpty() || path.equals("/")) {
@@ -42,13 +44,13 @@ public class WailsPathHandler implements WebViewAssetLoader.PathHandler {
         byte[] data = bridge.serveAsset(path, "GET", "{}");
 
         if (data == null || data.length == 0) {
-            Log.w(TAG, "Asset not found: " + path);
+            Log.w(TAG, "Asset not found: " + loggedPath);
             return null; // Return null to let WebView handle 404
         }
 
         // Determine MIME type
         String mimeType = bridge.getAssetMimeType(path);
-        if (DEBUG) Log.d(TAG, "Serving " + path + " with type " + mimeType + " (" + data.length + " bytes)");
+        if (DEBUG) Log.d(TAG, "Serving " + loggedPath + " with type " + mimeType + " (" + data.length + " bytes)");
 
         // Create response
         InputStream inputStream = new ByteArrayInputStream(data);

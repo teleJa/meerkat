@@ -117,6 +117,18 @@ public class MainActivity extends AppCompatActivity {
         loadApplication();
     }
 
+    private static boolean isShellPairingRequest(WebResourceRequest request) {
+        if (request.isForMainFrame() || !"GET".equals(request.getMethod())) return false;
+        String referrer = "";
+        for (java.util.Map.Entry<String, String> header : request.getRequestHeaders().entrySet()) {
+            if ("Sec-Fetch-Site".equalsIgnoreCase(header.getKey()) && !"same-origin".equals(header.getValue())) {
+                return false;
+            }
+            if ("Referer".equalsIgnoreCase(header.getKey())) referrer = header.getValue();
+        }
+        return (WAILS_SCHEME + "://" + WAILS_HOST + "/").equals(referrer);
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private void setupWebView() {
         webView = findViewById(R.id.webview);
@@ -164,6 +176,11 @@ public class MainActivity extends AppCompatActivity {
                     // full URL including the query string, because
                     // WebViewAssetLoader.PathHandler strips query params
                     String path = request.getUrl().getPath();
+                    if (path != null && path.startsWith("/client/pair/") && !isShellPairingRequest(request)) {
+                        return new WebResourceResponse("application/json", "UTF-8", 403, "Forbidden",
+                            java.util.Collections.singletonMap("Cache-Control", "no-store"),
+                            new java.io.ByteArrayInputStream("{}".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                    }
                     if (path != null && path.startsWith("/wails/")) {
                         String fullPath = path;
                         String query = request.getUrl().getQuery();

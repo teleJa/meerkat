@@ -128,12 +128,18 @@ type CredentialInfo struct {
 	DaysToExpiry *int     `json:"days_to_expiry,omitempty"`
 }
 
+func (c *Client) hubConnection() (string, Auth, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	auth, err := c.Auth()
+	return c.state.ProxyURL, auth, err
+}
+
 func (c *Client) apiGET(path string) (int, []byte, error) {
-	proxy := c.ProxyURL()
+	proxy, auth, authErr := c.hubConnection()
 	if proxy == "" {
 		return 0, nil, fmt.Errorf("loopback proxy not ready")
 	}
-	auth, authErr := c.Auth()
 	if authErr != nil {
 		return 0, nil, ErrCredentialUnreadable
 	}
@@ -144,11 +150,10 @@ func (c *Client) apiGET(path string) (int, []byte, error) {
 	if err != nil {
 		return 0, nil, err
 	}
-	request.Header.Set("Authorization", "Bearer "+auth.Token)
-	client := &http.Client{Timeout: 25 * time.Second}
+	client := loopbackHTTPClient(25 * time.Second)
 	response, err := client.Do(request)
 	if err != nil {
-		c.setHubState("retrying")
+		c.setHubState(proxy, "retrying")
 		c.Logf("api: GET %s network error: %v", path, err)
 		return 0, nil, ErrHubUnreachable
 	}
@@ -161,25 +166,27 @@ func (c *Client) apiGET(path string) (int, []byte, error) {
 
 // observeResponse updates Hub/auth state without logging credentials.
 func (c *Client) observeResponse(auth Auth, status int, body []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	current, _ := c.Auth()
+	if current.HubURL != auth.HubURL || current.Token != auth.Token {
+		return
+	}
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
-		hubErr := parseHubError(status, body)
-		c.markAuthFailure(hubErr)
+		c.markAuthFailureLocked(parseHubError(status, body))
 		return
 	}
 	if status >= 200 && status < 400 {
-		c.setHubState("connected")
+		c.state.HubState = "connected"
 		if auth.IsMobile() {
 			c.cfgMu.Lock()
-			if c.auth.CredentialID == auth.CredentialID {
-				c.auth.LastUsedAt = nowISO(time.Now())
-			}
+			c.auth.LastUsedAt = nowISO(time.Now())
 			c.cfgMu.Unlock()
 		}
 	}
 }
 
-func (c *Client) markAuthFailure(hubErr *HubError) {
-	c.mu.Lock()
+func (c *Client) markAuthFailureLocked(hubErr *HubError) {
 	switch hubErr.Code {
 	case "mobile_credential_expired":
 		c.authFailure = "expired"
@@ -196,13 +203,14 @@ func (c *Client) markAuthFailure(hubErr *HubError) {
 	default:
 		c.state.CredentialError = hubErr.UserMessage()
 	}
-	c.mu.Unlock()
 	c.Logf("auth: %d %s", hubErr.Status, hubErr.Code)
 }
 
-func (c *Client) setHubState(state string) {
+func (c *Client) setHubState(proxy, state string) {
 	c.mu.Lock()
-	c.state.HubState = state
+	if c.state.ProxyURL == proxy {
+		c.state.HubState = state
+	}
 	c.mu.Unlock()
 }
 
@@ -269,33 +277,78 @@ func (c *Client) FetchTaskDetail(id string) (map[string]any, int, error) {
 
 // PairDevice exchanges a one-time pairing code for a long-lived mobile
 // credential and stores it in Android Keystore-backed storage.
-func (c *Client) PairDevice(code, label, platform, model, appVersion string) error {
+func (c *Client) PairDevice(hubAddress, code, label, platform, model, appVersion string) error {
 	code = strings.TrimSpace(code)
 	if code == "" {
 		return fmt.Errorf("请输入配对码")
+	}
+	c.credentialMu.Lock()
+	defer c.credentialMu.Unlock()
+
+	currentURL := c.Config().HubURL
+	hubURL := currentURL
+	if hubAddress != "" {
+		var err error
+		hubURL, err = ParseHubAddress(hubAddress)
+		if err != nil {
+			return err
+		}
+		// Preserve a previously provisioned HTTPS URL when re-pairing
+		// with the same address displayed in the host:port input.
+		if strings.TrimPrefix(hubURL, "http://") == hostFromURL(currentURL) {
+			hubURL = currentURL
+		}
 	}
 	proxy := c.ProxyURL()
 	if proxy == "" {
 		return fmt.Errorf("内嵌网络尚未就绪")
 	}
+	previous, _ := c.Auth()
+	var replacement *hubProxy
+	if hubURL != currentURL {
+		var err error
+		replacement, err = c.prepareProxy(hubURL, 0, true)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if replacement != nil {
+				replacement.close()
+			}
+		}()
+	}
 	payload, _ := json.Marshal(map[string]string{
 		"code": code, "label": label, "platform": platform, "model": model, "app_version": appVersion,
 	})
-	request, err := http.NewRequest(http.MethodPost, proxy+"/api/mobile/register", bytes.NewReader(payload))
+	request, err := http.NewRequest(http.MethodPost, hubURL+"/api/mobile/register", bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(request)
+	transport := &http.Transport{DialContext: c.dialHub}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{
+		Transport: transport, Timeout: 30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	response, err := client.Do(request)
 	if err != nil {
-		c.setHubState("retrying")
-		c.Logf("pair: network error: %v", err)
+		if replacement == nil {
+			c.setHubState(proxy, "retrying")
+		}
+		c.Logf("pair: network error")
 		return ErrHubUnreachable
 	}
 	defer response.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if response.StatusCode >= 300 && response.StatusCode < 400 {
+		return fmt.Errorf("Hub 返回了跳转，请检查 Hub 地址")
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("无法读取配对响应：%w", err)
+	}
 	if response.StatusCode != http.StatusCreated {
-		c.Logf("pair: register status=%d body=%s", response.StatusCode, shortBody(body))
+		c.Logf("pair: register status=%d", response.StatusCode)
 		return parseHubError(response.StatusCode, body)
 	}
 	var result struct {
@@ -317,21 +370,41 @@ func (c *Client) PairDevice(code, label, platform, model, appVersion string) err
 	}
 	auth := Auth{
 		Kind: AuthKindMobile, Token: result.Token, CredentialID: result.CredentialID,
+		HubURL: hubURL, ProxyPort: previous.ProxyPort,
 		Label: result.Credential.Label, Scopes: result.Scopes, CreatedAt: result.Credential.CreatedAt,
 		ExpiresAt: expiresAt, LastUsedAt: nowISO(time.Now()),
+	}
+	if replacement != nil {
+		auth.ProxyPort = replacement.port
 	}
 	if err := SaveAuth(c.store, auth); err != nil {
 		return fmt.Errorf("凭证无法保存：%w", err)
 	}
-	c.setAuth(auth, nil)
-	c.setHubState("connected")
-	c.Logf("pair: registered credential=%s label=%q", auth.CredentialID, auth.Label)
+	c.mu.Lock()
+	var retired *hubProxy
+	if replacement != nil {
+		retired = c.proxy
+		c.activateProxyLocked(replacement)
+		replacement = nil
+		c.dshVersion, c.dshCommit = "", ""
+		c.state.DSHVersion, c.state.DSHCommit = "", ""
+		c.state.DeviceCount = 0
+	}
+	c.setAuthLocked(auth, nil)
+	c.state.HubState = "connected"
+	c.mu.Unlock()
+	if retired != nil {
+		retired.close()
+	}
+	c.Logf("pair: registered credential=%s", auth.CredentialID)
 	return nil
 }
 
 // RotateCredential rotates the current mobile credential. The Hub keeps the old
 // token valid for five minutes; the new token is saved immediately.
 func (c *Client) RotateCredential() error {
+	c.credentialMu.Lock()
+	defer c.credentialMu.Unlock()
 	auth, authErr := c.Auth()
 	if authErr != nil {
 		return ErrCredentialUnreadable
@@ -348,10 +421,9 @@ func (c *Client) RotateCredential() error {
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+auth.Token)
-	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(request)
+	response, err := loopbackHTTPClient(30 * time.Second).Do(request)
 	if err != nil {
-		c.setHubState("retrying")
+		c.setHubState(proxy, "retrying")
 		return ErrHubUnreachable
 	}
 	defer response.Body.Close()
@@ -393,18 +465,18 @@ func (c *Client) CheckHealth() error {
 	if proxy == "" {
 		return fmt.Errorf("loopback proxy not ready")
 	}
-	response, err := (&http.Client{Timeout: 8 * time.Second}).Get(proxy + "/api/health")
+	response, err := loopbackHTTPClient(8 * time.Second).Get(proxy + "/api/health")
 	if err != nil {
-		c.setHubState("retrying")
+		c.setHubState(proxy, "retrying")
 		return err
 	}
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 	if response.StatusCode != http.StatusOK {
-		c.setHubState("retrying")
+		c.setHubState(proxy, "retrying")
 		return fmt.Errorf("health status %d", response.StatusCode)
 	}
-	c.setHubState("connected")
+	c.setHubState(proxy, "connected")
 	return nil
 }
 
@@ -420,19 +492,23 @@ func (c *Client) HarnessURL(deviceID string) string {
 // CheckHarness probes the Hub harness proxy root. It also creates the Hub-side
 // DSH cookie jar that the subsequent WebSocket/iframe requests use.
 func (c *Client) CheckHarness(deviceID string) (int, error) {
-	request, err := http.NewRequest(http.MethodGet, c.HarnessURL(deviceID), nil)
+	proxy, auth, authErr := c.hubConnection()
+	if proxy == "" {
+		return 0, fmt.Errorf("loopback proxy not ready")
+	}
+	request, err := http.NewRequest(http.MethodGet, proxy+"/harness-proxy/"+url.PathEscape(deviceID)+"/", nil)
 	if err != nil {
 		return 0, err
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := loopbackHTTPClient(30 * time.Second)
 	response, err := client.Do(request)
 	if err != nil {
-		c.setHubState("retrying")
+		c.setHubState(proxy, "retrying")
 		return 0, err
 	}
 	defer response.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if auth, authErr := c.Auth(); authErr == nil {
+	if authErr == nil {
 		c.observeResponse(auth, response.StatusCode, body)
 	}
 	c.Logf("harness: check device=%s status=%d", deviceID, response.StatusCode)
@@ -450,7 +526,7 @@ func (c *Client) ProbeHarnessWS(deviceID string) (string, error) {
 		return "", fmt.Errorf("loopback proxy not ready")
 	}
 	wsURL := "ws" + strings.TrimPrefix(base, "http") + "/harness-proxy/" + url.PathEscape(deviceID) + "/api/remote.mux"
-	dialer := websocket.Dialer{HandshakeTimeout: 20 * time.Second}
+	dialer := websocket.Dialer{HandshakeTimeout: 20 * time.Second, NetDialContext: dialLoopbackProxy}
 	conn, response, err := dialer.Dial(wsURL, nil)
 	if err != nil {
 		status := 0

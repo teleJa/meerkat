@@ -278,6 +278,9 @@ func (c *androidClient) writeClientError(w http.ResponseWriter, prefix string, s
 	payload := map[string]any{"ok": false, "status": status, "error": err.Error()}
 	var hubErr *androidclient.HubError
 	switch {
+	case errors.Is(err, androidclient.ErrInvalidHubAddress):
+		payload["error"] = "invalid_hub_address"
+		payload["message"] = err.Error()
 	case errors.Is(err, androidclient.ErrNoToken):
 		payload["error"] = "not_configured"
 		payload["message"] = "尚未配对或保存凭证"
@@ -299,15 +302,27 @@ func (c *androidClient) handlePair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Code  string `json:"code"`
-		Label string `json:"label"`
+		Code       string `json:"code"`
+		Label      string `json:"label"`
+		HubAddress string `json:"hub_address"`
 	}
 	if r.Method == http.MethodGet {
-		// Wails' Android WebViewAssetLoader turns every wails.localhost asset
-		// request into GET, so the page passes b64url(code)/b64url(label) in
-		// the path. POST is kept for native callers/tests.
+		// Android's WebViewAssetLoader discards the body and query string.
+		// The local page sends the code, label and address as path segments.
+		// Keep accepting the earlier two-segment form for the current Hub.
 		rest := strings.TrimPrefix(r.URL.Path, "/client/pair/")
 		parts := strings.Split(rest, "/")
+		if len(parts) == 3 {
+			address, err := androidclient.DecodePathParam("/client/pair", "/client/pair/"+parts[2])
+			if err != nil {
+				c.writeClientError(w, "配对失败", 0, androidclient.ErrInvalidHubAddress)
+				return
+			}
+			body.HubAddress = address
+		} else if len(parts) > 3 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid_pairing_request"})
+			return
+		}
 		code, err := androidclient.DecodePathParam("/client/pair", "/client/pair/"+parts[0])
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid_code"})
@@ -341,12 +356,16 @@ func (c *androidClient) handlePair(w http.ResponseWriter, r *http.Request) {
 	if label == "" {
 		label = "Android 手机"
 	}
-	if err := c.client.PairDevice(body.Code, label, "android", "", version); err != nil {
+	before := c.client.Config().HubURL
+	if err := c.client.PairDevice(body.HubAddress, body.Code, label, "android", "", version); err != nil {
 		c.writeClientError(w, "配对失败", 0, err)
 		return
 	}
 	state := c.client.Snapshot()
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "configured": true, "auth_state": state.AuthState, "credential_id": state.CredentialID})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "configured": true, "auth_state": state.AuthState, "credential_id": state.CredentialID,
+		"hub_addr": state.HubAddr, "hub_changed": before != c.client.Config().HubURL,
+	})
 }
 
 func (c *androidClient) handleCredentialRotate(w http.ResponseWriter, r *http.Request) {

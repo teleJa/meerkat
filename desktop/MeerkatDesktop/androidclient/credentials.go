@@ -33,6 +33,8 @@ const (
 type Auth struct {
 	Kind         string   `json:"kind"`
 	Token        string   `json:"token"`
+	HubURL       string   `json:"hub_url,omitempty"`
+	ProxyPort    int      `json:"proxy_port,omitempty"`
 	CredentialID string   `json:"credential_id,omitempty"`
 	Label        string   `json:"label,omitempty"`
 	Scopes       []string `json:"scopes,omitempty"`
@@ -125,11 +127,14 @@ func LoadAuth(store SecureStore) (Auth, bool, error) {
 	auth.Kind = strings.TrimSpace(auth.Kind)
 	auth.Token = strings.TrimSpace(auth.Token)
 	auth.CredentialID = strings.TrimSpace(auth.CredentialID)
+	if auth.Token == "" {
+		if auth.HubURL != "" {
+			return Auth{HubURL: auth.HubURL, ProxyPort: auth.ProxyPort}, true, nil
+		}
+		return Auth{}, true, fmt.Errorf("credential is empty")
+	}
 	if auth.Kind == "" {
 		auth.Kind = AuthKindAdmin
-	}
-	if auth.Token == "" {
-		return Auth{}, true, fmt.Errorf("credential is empty")
 	}
 	return auth, true, nil
 }
@@ -138,7 +143,7 @@ func SaveAuth(store SecureStore, auth Auth) error {
 	if store == nil {
 		return fmt.Errorf("secure storage unavailable")
 	}
-	if !auth.Configured() {
+	if !auth.Configured() && auth.HubURL == "" {
 		return fmt.Errorf("credential is empty")
 	}
 	raw, err := json.Marshal(auth)
@@ -175,6 +180,9 @@ func loadOrMigrateAuth(dataDir string, cfg Config, store SecureStore) (Auth, Con
 		if err := SaveConfig(dataDir, cfg); err != nil {
 			return Auth{}, cfg, err
 		}
+	}
+	if auth.HubURL != "" {
+		cfg.HubURL = auth.HubURL
 	}
 	return auth, cfg, nil
 }

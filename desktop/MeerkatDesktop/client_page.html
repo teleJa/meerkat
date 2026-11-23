@@ -292,24 +292,36 @@
         <h3 style="margin:0">设备配对</h3>
         <span id="credChip" class="chip">未配对</span>
       </div>
+      <form id="pairForm" method="post" novalidate>
+      <div style="margin:9px 0">
+        <label for="hubAddrInput">Hub 地址</label>
+        <div id="hubAddrHint" class="muted">填写主机和端口，例如 hub.example:7443。配对成功后自动保存。</div>
+        <div class="row" style="margin:4px 0">
+          <input id="hubAddrInput" name="hub_address" type="text" class="grow" required
+                 inputmode="url" maxlength="260" enterkeyhint="next" aria-describedby="hubAddrHint"
+                 autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+        </div>
+        <div id="hubAddrError" class="muted" role="status"></div>
+      </div>
       <div id="pairCodeHelp" class="muted" style="margin:7px 0 9px">在 Hub 的「设置 → 网络 → 移动设备」生成手机配对码。配对后获得只读设备凭证。</div>
       <div class="row wrap" style="margin-bottom:8px">
-        <input id="pairCodeInput" class="grow" type="text" placeholder="MEERKAT-XXXX-XXXX"
+        <input id="pairCodeInput" name="code" class="grow" type="text" placeholder="MEERKAT-XXXX-XXXX" required
                aria-label="手机配对码" aria-describedby="pairCodeHelp" enterkeyhint="done"
                autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false">
         <button type="button" class="secondary hidden" id="scanPairBtn">扫码配对</button>
       </div>
       <div id="scanPairStatus" class="muted" role="status"></div>
       <div class="row" style="margin-bottom:8px">
-        <input id="pairLabelInput" class="grow" type="text" placeholder="设备名称（可选，例如 iQOO 10）"
+        <input id="pairLabelInput" name="label" class="grow" type="text" placeholder="设备名称（可选，例如 iQOO 10）"
                autocomplete="off" autocapitalize="sentences" autocorrect="off" spellcheck="false">
       </div>
       <div id="credHint" class="muted">尚未配对</div>
       <div class="row wrap" style="margin-top:9px">
-        <button id="pairBtn">配对</button>
-        <button class="secondary" id="rotateBtn" disabled>轮换凭证</button>
-        <button class="danger" id="unpairBtn" disabled>解除配对</button>
+        <button type="submit" id="pairBtn">配对</button>
+        <button type="button" class="secondary" id="rotateBtn" disabled>轮换凭证</button>
+        <button type="button" class="danger" id="unpairBtn" disabled>解除配对</button>
       </div>
+      </form>
       <div class="kv" id="credMeta" style="margin-top:11px">
         <div class="k">凭证</div><div class="v mono" id="credId">-</div>
         <div class="k">过期</div><div class="v" id="credExpiry">-</div>
@@ -616,6 +628,8 @@ function updateNetUI() {
   $('setIPs').textContent = (t.tailscale_ips || []).join(', ') || '-';
   $('setProxy').textContent = t.proxy_url || '-';
   $('setHub').textContent = t.hub_addr || '-';
+  const hubInput = $('hubAddrInput');
+  if (!hubInput.dataset.edited && t.hub_addr) hubInput.value = t.hub_addr;
   const dshVersion = t.dsh_version
     ? t.dsh_version + (t.dsh_commit ? ' (' + t.dsh_commit + ')' : '')
     : '-';
@@ -1117,14 +1131,49 @@ function setupPairingScanner() {
   };
 }
 
-async function pairDevice() {
+function showHubAddressError(message) {
+  const input = $('hubAddrInput');
+  $('hubAddrError').textContent = message;
+  input.setAttribute('aria-invalid', message ? 'true' : 'false');
+  input.setAttribute('aria-describedby', message ? 'hubAddrHint hubAddrError' : 'hubAddrHint');
+}
+
+async function pairDevice(event) {
+  event.preventDefault();
+  if ($('pairBtn').disabled) return;
+  const input = $('hubAddrInput');
+  const address = input.value.trim();
+  if (!address) {
+    showHubAddressError('请输入主机和端口，例如 hub.example:7443');
+    input.focus();
+    return;
+  }
   const code = $('pairCodeInput').value.trim();
-  if (!code) { toast('先输入配对码'); return; }
+  if (!code) { toast('先输入配对码'); $('pairCodeInput').focus(); return; }
   $('pairBtn').disabled = true;
+  input.disabled = true;
   try {
     const label = $('pairLabelInput').value.trim() || 'Android 手机';
-    const payload = await getJSON('/client/pair/' + b64url(code) + '/' + b64url(label));
-    if (!payload.ok) throw new Error(clientErrorMessage(payload, '配对失败'));
+    const payload = await getJSON('/client/pair/' + b64url(code) + '/' + b64url(label) + '/' + b64url(address));
+    if (payload.error === 'invalid_hub_address') {
+      showHubAddressError(clientErrorMessage(payload, '请输入主机和端口'));
+      input.disabled = false;
+      input.focus();
+      return;
+    }
+    if (!payload.ok) {
+      toast(clientErrorMessage(payload, '配对失败'));
+      return;
+    }
+    delete input.dataset.edited;
+    input.value = payload.hub_addr;
+    $('setHub').textContent = payload.hub_addr;
+    showHubAddressError('');
+    if (payload.hub_changed) {
+      // Drop the previous Hub's iframe and in-flight list renders together.
+      location.reload();
+      return;
+    }
     state.configured = true;
     state.authKind = 'mobile';
     state.authState = payload.auth_state || 'ok';
@@ -1139,9 +1188,9 @@ async function pairDevice() {
     await loadDevices();
     await loadTasks();
   } catch (e) {
-    applyAuthFailure({ error: '', message: e.message });
     toast('配对失败：' + e.message);
   } finally {
+    input.disabled = false;
     $('pairBtn').disabled = false;
   }
 }
@@ -1327,10 +1376,13 @@ $('probeBtn').addEventListener('click', probeHub);
 $('saveTokenBtn').addEventListener('click', saveToken);
 $('clearTokenBtn').addEventListener('click', clearToken);
 setupPairingScanner();
-$('pairBtn').addEventListener('click', pairDevice);
+$('pairForm').addEventListener('submit', pairDevice);
+$('hubAddrInput').addEventListener('input', (event) => {
+  event.target.dataset.edited = 'true';
+  showHubAddressError('');
+});
 $('rotateBtn').addEventListener('click', rotateCredential);
 $('unpairBtn').addEventListener('click', clearToken);
-$('pairCodeInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') pairDevice(); });
 $('pasteBtn').addEventListener('click', pasteToken);
 $('showBtn').addEventListener('click', () => {
   const input = $('tokenInput');

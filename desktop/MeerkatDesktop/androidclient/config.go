@@ -3,8 +3,12 @@ package androidclient
 import (
 	"encoding/json"
 	"errors"
+	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -13,6 +17,39 @@ const HubAddr = "192.0.2.10:7443"
 
 // DefaultHubURL is used when the local configuration has no HubURL.
 const DefaultHubURL = "http://" + HubAddr
+
+var (
+	ErrInvalidHubAddress = errors.New("请输入主机名或 IP 地址加端口，例如 hub.example:7443")
+	dnsLabel             = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+	decimalPort          = regexp.MustCompile(`^[0-9]{1,5}$`)
+)
+
+// ParseHubAddress validates and canonicalizes the host:port shown in Settings.
+func ParseHubAddress(raw string) (string, error) {
+	address := strings.TrimSpace(raw)
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || !decimalPort.MatchString(port) {
+		return "", ErrInvalidHubAddress
+	}
+	portNumber, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || portNumber == 0 {
+		return "", ErrInvalidHubAddress
+	}
+	if ip, err := netip.ParseAddr(host); err == nil && ip.Zone() == "" && strings.HasPrefix(address, "[") == ip.Is6() {
+		host = ip.String()
+	} else {
+		host = strings.TrimSuffix(strings.ToLower(host), ".")
+		if len(host) > 253 || strings.HasPrefix(address, "[") {
+			return "", ErrInvalidHubAddress
+		}
+		for _, label := range strings.Split(host, ".") {
+			if !dnsLabel.MatchString(label) {
+				return "", ErrInvalidHubAddress
+			}
+		}
+	}
+	return "http://" + net.JoinHostPort(host, strconv.FormatUint(portNumber, 10)), nil
+}
 
 // Config is the durable client configuration. The admin token is stored in the
 // app's private data directory (mode 0600); it is never compiled into the APK.
