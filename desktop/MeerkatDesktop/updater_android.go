@@ -19,7 +19,7 @@ import (
 )
 
 // The test bootstrap overrides these at link time. Release builds use the public feed.
-var androidUpdateURL = "https://github.com/teleJa/meerkat/releases/latest/download/latest.json"
+var androidUpdateURL = "https://api.github.com/repos/teleJa/meerkat/releases"
 var androidUpdateKey string
 var downloadBytes atomic.Int64
 var downloadLock sync.Mutex
@@ -59,7 +59,7 @@ func runMobileUpdate(action, dir, envelope string, current int64, sdk int) (mobi
 	var m update.Manifest
 	if action == "check" {
 		var data []byte
-		data, m, err = update.Fetch(androidUpdateURL, key)
+		data, m, err = update.FetchRelease(androidUpdateURL, key)
 		result.Envelope = data
 	} else {
 		m, err = update.Parse([]byte(envelope), key)
@@ -88,6 +88,10 @@ func runMobileUpdate(action, dir, envelope string, current int64, sdk int) (mobi
 		downloadLock.Unlock()
 		if ctx == nil {
 			return result, fmt.Errorf("下载尚未开始")
+		}
+		p.URL, err = update.ReleasePackageURL(ctx, androidUpdateURL, m.Version, p.URL)
+		if err != nil {
+			return result, err
 		}
 		err = update.DownloadTo(ctx, p, path, func(n, _ int64) { downloadBytes.Store(n) })
 	default:

@@ -112,7 +112,7 @@ func parseHash(value string) ([sha256.Size]byte, error) {
 	return hash, nil
 }
 
-func get(ctx context.Context, raw string, timeout time.Duration) (*http.Response, error) {
+func get(ctx context.Context, raw string, timeout time.Duration, accept string) (*http.Response, error) {
 	initial, err := parseURL(raw)
 	if err != nil {
 		return nil, err
@@ -131,6 +131,7 @@ func get(ctx context.Context, raw string, timeout time.Duration) (*http.Response
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("Accept", accept)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -146,7 +147,7 @@ func Fetch(raw string, key ed25519.PublicKey) ([]byte, Manifest, error) {
 	if len(key) != ed25519.PublicKeySize {
 		return nil, Manifest{}, fmt.Errorf("此构建未配置更新签名公钥")
 	}
-	resp, err := get(context.Background(), raw, 8*time.Second)
+	resp, err := get(context.Background(), raw, 8*time.Second, "application/octet-stream")
 	if err != nil {
 		return nil, Manifest{}, err
 	}
@@ -180,7 +181,7 @@ func DownloadTo(ctx context.Context, platform Platform, target string, progress 
 	if err != nil {
 		return err
 	}
-	resp, err := get(ctx, platform.URL, 10*time.Minute)
+	resp, err := get(ctx, platform.URL, 10*time.Minute, "application/octet-stream")
 	if err != nil {
 		return err
 	}
