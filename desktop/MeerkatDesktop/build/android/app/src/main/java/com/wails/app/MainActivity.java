@@ -176,7 +176,7 @@ public class MainActivity extends AppCompatActivity {
                     // full URL including the query string, because
                     // WebViewAssetLoader.PathHandler strips query params
                     String path = request.getUrl().getPath();
-                    if (path != null && path.startsWith("/client/pair/") && !isShellPairingRequest(request)) {
+                    if (path != null && (path.startsWith("/client/pair/") || path.startsWith("/client/hub-draft/") || path.startsWith("/client/probe/")) && !isShellPairingRequest(request)) {
                         return new WebResourceResponse("application/json", "UTF-8", 403, "Forbidden",
                             java.util.Collections.singletonMap("Cache-Control", "no-store"),
                             new java.io.ByteArrayInputStream("{}".getBytes(java.nio.charset.StandardCharsets.UTF_8)));

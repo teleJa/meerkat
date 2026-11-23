@@ -36,6 +36,7 @@ const Hostname = "meerkat-android"
 
 // State is the JSON snapshot shown in the client WebView.
 type State struct {
+	DraftHubAddr         string   `json:"draft_hub_addr,omitempty"`
 	State                string   `json:"state"`
 	Backend              string   `json:"backend_state"`
 	AuthURL              string   `json:"auth_url"`
@@ -121,6 +122,13 @@ func New(dataDir string, store SecureStore, writeClipboard func(string) bool) (*
 	}
 	if authErr != nil {
 		_ = c.logf("credential: %v", authErr)
+	}
+	if store != nil {
+		if draft, found, err := store.Get(draftHubKey); err == nil && found {
+			if parsed, err := ParseHubAddress(draft); err == nil {
+				c.state.DraftHubAddr = hostFromURL(parsed)
+			}
+		}
 	}
 	c.refreshAuthStateLocked()
 	return c, nil
@@ -679,16 +687,57 @@ func (c *Client) Devices() (int, string) {
 // Probe checks the Hub over tsnet: an HTTP /api/health request and a WebSocket
 // upgrade to /api/edges/ws. The WS handshake is enough to prove long-lived
 // connections traverse the tailnet; a real Edge hello needs a device secret.
-func (c *Client) Probe() string {
+const draftHubKey = "meerkat.mobile.draft-hub.v1"
+
+// SaveHubDraft only changes the pairing form. The active proxy keeps its bound credential.
+func (c *Client) SaveHubDraft(address string) (string, error) {
+	parsed, err := ParseHubAddress(address)
+	if err != nil {
+		return "", err
+	}
+	address = hostFromURL(parsed)
+	c.credentialMu.Lock()
+	defer c.credentialMu.Unlock()
+	if c.store == nil {
+		return "", fmt.Errorf("地址存储不可用")
+	}
+	if err := c.store.Set(draftHubKey, address); err != nil {
+		return "", err
+	}
 	c.mu.Lock()
-	server := c.server
-	proxyURL := c.state.ProxyURL
+	c.state.DraftHubAddr = address
 	c.mu.Unlock()
-	if server == nil || proxyURL == "" {
+	return address, nil
+}
+
+func (c *Client) Probe() string {
+	return c.probeURL(c.Config().HubURL)
+}
+
+func (c *Client) ProbeAddress(address string) string {
+	target, err := ParseHubAddress(address)
+	if err != nil {
+		return err.Error()
+	}
+	active := c.Config().HubURL
+	if hostFromURL(active) == hostFromURL(target) {
+		target = active
+	}
+	return c.probeURL(target)
+}
+
+func (c *Client) probeURL(target string) string {
+	c.mu.Lock()
+	dial := c.dialHub
+	c.mu.Unlock()
+	if dial == nil {
 		return "tsnet not ready"
 	}
 	var out strings.Builder
-	response, err := loopbackHTTPClient(15 * time.Second).Get(proxyURL + "/api/health")
+	transport := &http.Transport{DialContext: dial}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Get(target + "/api/health")
 	if err != nil {
 		fmt.Fprintf(&out, "HTTP /api/health: ERROR %v\n", err)
 	} else {
@@ -698,11 +747,9 @@ func (c *Client) Probe() string {
 	}
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 10 * time.Second,
-		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return server.Dial(ctx, network, addr)
-		},
+		NetDialContext:   dial,
 	}
-	hubWS := "ws" + strings.TrimPrefix(c.Config().HubURL, "http") + "/api/edges/ws"
+	hubWS := "ws" + strings.TrimPrefix(target, "http") + "/api/edges/ws"
 	conn, resp, err := dialer.Dial(hubWS, nil)
 	if err != nil {
 		status := 0

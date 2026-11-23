@@ -295,7 +295,7 @@
       <form id="pairForm" method="post" novalidate>
       <div style="margin:9px 0">
         <label for="hubAddrInput">Hub 地址</label>
-        <div id="hubAddrHint" class="muted">填写主机和端口，例如 hub.example:7443。配对成功后自动保存。</div>
+        <div id="hubAddrHint" class="muted">填写主机和端口，例如 hub.example:7443。离开输入框时自动保存。</div>
         <div class="row" style="margin:4px 0">
           <input id="hubAddrInput" name="hub_address" type="text" class="grow" required
                  inputmode="url" maxlength="260" enterkeyhint="next" aria-describedby="hubAddrHint"
@@ -629,7 +629,7 @@ function updateNetUI() {
   $('setProxy').textContent = t.proxy_url || '-';
   $('setHub').textContent = t.hub_addr || '-';
   const hubInput = $('hubAddrInput');
-  if (!hubInput.dataset.edited && t.hub_addr) hubInput.value = t.hub_addr;
+  if (!hubInput.dataset.edited && t.hub_addr) hubInput.value = t.draft_hub_addr || t.hub_addr;
   const dshVersion = t.dsh_version
     ? t.dsh_version + (t.dsh_commit ? ' (' + t.dsh_commit + ')' : '')
     : '-';
@@ -1103,6 +1103,7 @@ function setupPairingScanner() {
     if (!event.isTrusted || pendingId) return;
     pendingId = Array.from(crypto.getRandomValues(new Uint8Array(8)), byte => byte.toString(16).padStart(2, '0')).join('');
     status.textContent = '';
+    $('pairCodeInput').value = '';
     button.disabled = true;
     try {
       scanner.postMessage(pendingId);
@@ -1112,7 +1113,7 @@ function setupPairingScanner() {
       status.textContent = messages.unavailable;
     }
   });
-  scanner.onmessage = (event) => {
+  scanner.onmessage = async (event) => {
     let result;
     try {
       result = JSON.parse(event.data);
@@ -1123,8 +1124,14 @@ function setupPairingScanner() {
     pendingId = '';
     button.disabled = false;
     if (result.status === 'ok') {
+      if (result.hub) {
+        const input = $('hubAddrInput');
+        input.value = result.hub;
+        input.dataset.edited = 'true';
+        if (!await saveHubDraft()) { status.textContent = '二维码中的 Hub 地址无效或无法保存，请检查后重扫。'; return; }
+      }
       $('pairCodeInput').value = result.code;
-      status.textContent = '已填入手机配对码。请点「配对」。';
+      status.textContent = result.hub ? '已填入 Hub 地址 ' + $('hubAddrInput').value + ' 和配对码。确认后请点「配对」。' : '已填入手机配对码。请点「配对」。';
     } else {
       status.textContent = messages[result.status] || messages.unavailable;
     }
@@ -1154,6 +1161,7 @@ async function pairDevice(event) {
   input.disabled = true;
   try {
     const label = $('pairLabelInput').value.trim() || 'Android 手机';
+    await draftWrites;
     const payload = await getJSON('/client/pair/' + b64url(code) + '/' + b64url(label) + '/' + b64url(address));
     if (payload.error === 'invalid_hub_address') {
       showHubAddressError(clientErrorMessage(payload, '请输入主机和端口'));
@@ -1280,10 +1288,33 @@ async function copyAuth() {
   $('loginMsg').textContent = ok ? '登录链接已复制' : '复制失败，请长按日志里的链接';
 }
 
+let draftWrites = Promise.resolve();
+function saveHubDraft() {
+  const input = $('hubAddrInput');
+  const address = input.value.trim();
+  draftWrites = draftWrites.then(async () => {
+    try {
+      if (!address) throw new Error('请输入主机和端口');
+      const result = await getJSON('/client/hub-draft/' + b64url(address));
+      if (!result.ok) throw new Error(result.message || '保存地址失败');
+      if (input.value.trim() !== address) return '';
+      input.value = result.address;
+      showHubAddressError('');
+      return result.address;
+    } catch (e) {
+      if (input.value.trim() === address) showHubAddressError(e.message);
+      return '';
+    }
+  });
+  return draftWrites;
+}
+
 async function probeHub() {
   $('probeOut').textContent = '探测中…';
   try {
-    const res = await fetch('/client/probe');
+    const address = await saveHubDraft();
+    if (!address) { $('probeOut').textContent = '请先检查 Hub 地址'; return; }
+    const res = await fetch('/client/probe/' + b64url(address));
     $('probeOut').textContent = await res.text();
   } catch (e) {
     $('probeOut').textContent = '探测失败：' + e.message;
@@ -1377,6 +1408,8 @@ $('saveTokenBtn').addEventListener('click', saveToken);
 $('clearTokenBtn').addEventListener('click', clearToken);
 setupPairingScanner();
 $('pairForm').addEventListener('submit', pairDevice);
+$('hubAddrInput').addEventListener('blur', () => { if ($('hubAddrInput').dataset.edited) void saveHubDraft(); });
+$('pairCodeInput').addEventListener('input', () => { if (!$('pairCodeInput').value.trim()) $('scanPairStatus').textContent = ''; });
 $('hubAddrInput').addEventListener('input', (event) => {
   event.target.dataset.edited = 'true';
   showHubAddressError('');

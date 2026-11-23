@@ -380,7 +380,11 @@ func (c *Client) PairDevice(hubAddress, code, label, platform, model, appVersion
 	if err := SaveAuth(c.store, auth); err != nil {
 		return fmt.Errorf("凭证无法保存：%w", err)
 	}
+	if err := c.store.Delete(draftHubKey); err != nil {
+		c.Logf("pair: could not clear saved address draft")
+	}
 	c.mu.Lock()
+	c.state.DraftHubAddr = ""
 	var retired *hubProxy
 	if replacement != nil {
 		retired = c.proxy

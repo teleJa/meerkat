@@ -252,6 +252,10 @@ export function LiveSettingsPage() {
 
   const authURL = status.auth_url?.trim() ?? "";
   const isOnline = status.state === "running";
+  const ip = status.tailscale_ips?.find(value => !value.includes(":")) || status.tailscale_ips?.[0];
+  const port = status.port;
+  const pairingHubAddress = isOnline && ip && port && Number.isInteger(port) && port > 0 && port <= 65535
+    ? `${ip.includes(":") ? `[${ip}]` : ip}:${port}` : "";
   const isAuth = status.state === "needs_login";
   const isStarting = status.state === "starting";
   const isError = status.state === "error";
@@ -538,7 +542,7 @@ export function LiveSettingsPage() {
             </div>
           </section>
 
-          <MobileDevicesSection />
+          <MobileDevicesSection hubAddress={pairingHubAddress} />
           <section className="scroll-mt-20 rounded-xl border bg-card p-5">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -620,7 +624,7 @@ function mobileStatusTone(credential: MobileCredential) {
   return "border-emerald-200 text-emerald-700 dark:border-emerald-500/30 dark:text-emerald-400";
 }
 
-function MobileDevicesSection() {
+function MobileDevicesSection({ hubAddress }: { hubAddress: string }) {
   const [credentials, setCredentials] = useState<MobileCredential[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -708,7 +712,7 @@ function MobileDevicesSection() {
         <div className="border-b bg-muted/20 px-5 py-4" data-testid="mobile-pairing-result">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
             <div className="flex shrink-0 justify-center rounded-lg border bg-white p-2">
-              <QrCodeImage value={pairing.code} size={132} label="移动设备配对码二维码" />
+              <QrCodeImage value={hubAddress ? `meerkat-pair://v1?${new URLSearchParams({ hub: hubAddress, code: pairing.code })}` : pairing.code} size={132} label="移动设备配对码二维码" />
             </div>
             <div className="min-w-0 flex-1 space-y-2">
               <div className="text-[11px] text-muted-foreground">在手机 Meerkat「设置 → 设备配对」点「扫码配对」，或手动输入下方配对码。10 分钟内有效，只用一次。</div>

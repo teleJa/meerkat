@@ -193,6 +193,8 @@ func (c *androidClient) register(mux *http.ServeMux) {
 	mux.HandleFunc("/client/copy-auth", c.handleCopyAuth)
 	mux.HandleFunc("/client/statusbar/", c.handleStatusBar)
 	mux.HandleFunc("/client/probe", c.handleProbe)
+	mux.HandleFunc("/client/probe/", c.handleProbe)
+	mux.HandleFunc("/client/hub-draft/", c.handleHubDraft)
 	mux.HandleFunc("/client/dsh-log/", c.handleDSHLog)
 	mux.HandleFunc("/", c.handlePage)
 }
@@ -567,11 +569,36 @@ func (c *androidClient) handleStatusBar(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-func (c *androidClient) handleProbe(w http.ResponseWriter, _ *http.Request) {
+func (c *androidClient) handleHubDraft(w http.ResponseWriter, r *http.Request) {
+	if c.unavailable(w) {
+		return
+	}
+	address, err := androidclient.DecodePathParam("/client/hub-draft", r.URL.Path)
+	if err == nil {
+		address, err = c.client.SaveHubDraft(address)
+	}
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"ok": false, "message": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "address": address})
+}
+
+func (c *androidClient) handleProbe(w http.ResponseWriter, r *http.Request) {
 	if c.unavailable(w) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if r.URL.Path != "/client/probe" {
+		address, err := androidclient.DecodePathParam("/client/probe", r.URL.Path)
+		if err != nil {
+			http.Error(w, "无效的 Hub 地址", 400)
+			return
+		}
+		_, _ = w.Write([]byte(c.client.ProbeAddress(address)))
+		return
+	}
 	_, _ = w.Write([]byte(c.client.Probe()))
 }
 

@@ -92,10 +92,35 @@ final class PairingQrScanner {
             request.respond(canAskAgain ? "permission" : "permission_settings", null);
         } else if (code == null) {
             request.respond("cancelled", null);
+        } else if (code.startsWith("meerkat-pair://")) {
+            Uri uri = Uri.parse(code);
+            if (code.length() <= 1024 && "v1".equals(uri.getEncodedAuthority())
+                    && "".equals(uri.getEncodedPath()) && uri.getFragment() == null
+                    && uri.getQueryParameterNames().size() == 2
+                    && uri.getQueryParameters("hub").size() == 1 && uri.getQueryParameters("code").size() == 1) {
+                String address = uri.getQueryParameter("hub");
+                String shortCode = uri.getQueryParameter("code");
+                if (validAddress(address) && PAIRING_CODE.matcher(shortCode).matches()) {
+                    request.respond("ok", shortCode, address);
+                    return;
+                }
+            }
+            request.respond("invalid", null);
         } else if (PAIRING_CODE.matcher(code).matches()) {
             request.respond("ok", code);
         } else {
             request.respond(code.startsWith("MEERKAT1:") ? "desktop_invite" : "invalid", null);
+        }
+    }
+
+    private static boolean validAddress(String address) {
+        try {
+            java.net.URI target = new java.net.URI("http://" + address).parseServerAuthority();
+            return address.equals(target.getRawAuthority()) && target.getHost() != null
+                    && target.getRawUserInfo() == null && address.indexOf('%') < 0
+                    && target.getPort() > 0 && target.getPort() <= 65535;
+        } catch (java.net.URISyntaxException e) {
+            return false;
         }
     }
 
@@ -109,7 +134,12 @@ final class PairingQrScanner {
         }
 
         void respond(String status, String code) {
+            respond(status, code, null);
+        }
+
+        void respond(String status, String code, String address) {
             String payload = "{\"id\":" + JSONObject.quote(id) + ",\"status\":" + JSONObject.quote(status)
+                    + (address == null ? "" : ",\"hub\":" + JSONObject.quote(address))
                     + (code == null ? "" : ",\"code\":" + JSONObject.quote(code)) + "}";
             // The proxy targets the originating document. If it has navigated, the reply is dropped.
             reply.postMessage(payload);
