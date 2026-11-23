@@ -65,6 +65,13 @@
     margin: 10px 16px 0; padding: 12px; border: 1px solid rgba(251,191,36,.35);
     background: rgba(251,191,36,.08); border-radius: 12px;
   }
+  .pair-guide { margin: 10px 0; padding: 10px 12px; background: var(--card2); border: 1px solid var(--line); border-radius: 10px; }
+  .pair-guide strong { display: block; }
+  .pair-guide.compact { padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 12px; }
+  .pair-guide.compact .expanded, .pair-guide:not(.compact) .summary { display: none; }
+  .banner.ok { margin: 12px 0; border-color: var(--green); background: rgba(47,163,108,.12); overflow-wrap: anywhere; }
+  .banner.ok strong { color: var(--green); }
+  .banner.ok .row { margin-top: 10px; }
   .banner b { color: var(--amber); }
   main { padding: 16px; max-width: 760px; margin: 0 auto; }
   .view { animation: fade .16s ease-out; }
@@ -292,6 +299,10 @@
         <h3 style="margin:0">设备配对</h3>
         <span id="credChip" class="chip">未配对</span>
       </div>
+      <div id="pairSuccess" class="banner ok hidden">
+        <div role="status"><strong>配对成功，已连接到 Hub</strong><div>Hub：<code id="successHub"></code> · 设备：<span id="successDevice"></span></div></div>
+        <div class="row wrap"><button type="button" id="successDevices">去查看设备</button><button type="button" id="successDismiss" class="secondary">知道了</button></div>
+      </div>
       <form id="pairForm" method="post" novalidate>
       <div style="margin:9px 0">
         <label for="hubAddrInput">Hub 地址</label>
@@ -303,7 +314,10 @@
         </div>
         <div id="hubAddrError" class="muted" role="status"></div>
       </div>
-      <div id="pairCodeHelp" class="muted" style="margin:7px 0 9px">在 Hub 的「设置 → 网络 → 移动设备」生成手机配对码。配对后获得只读设备凭证。</div>
+      <div id="pairCodeHelp" class="pair-guide">
+        <div class="expanded"><strong>如何获取配对码</strong>在电脑 Hub 打开「设置 → 网络 → 移动设备 → 生成配对码」，再扫码或输入短码。</div>
+        <span class="summary">电脑 Hub → 设置 → 网络 → 移动设备 → 生成配对码</span>
+      </div>
       <div class="row wrap" style="margin-bottom:8px">
         <input id="pairCodeInput" name="code" class="grow" type="text" placeholder="MEERKAT-XXXX-XXXX" required
                aria-label="手机配对码" aria-describedby="pairCodeHelp" enterkeyhint="done"
@@ -512,12 +526,12 @@ const state = {
   pendingDsh: '',
 };
 
-function toast(message) {
+function toast(message, duration = 2400) {
   const box = $('toast');
   box.textContent = message;
   box.classList.add('show');
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => box.classList.remove('show'), 2400);
+  toast.timer = setTimeout(() => box.classList.remove('show'), duration);
 }
 
 async function getJSON(url, options) {
@@ -563,6 +577,7 @@ function updateAuthUI() {
   const bad = ['expired', 'revoked', 'invalid', 'unreadable'].includes(current);
   const warn = current === 'expiring' || current === 'none' || adminCompat;
   setChip($('credChip'), credentialStateLabel(), bad ? 'bad' : warn ? 'warn' : 'ok');
+  $('pairCodeHelp').classList.toggle('compact', state.authKind === 'mobile' && ['ok', 'expiring'].includes(current));
   $('credHint').textContent = credentialHint();
   $('credId').textContent = state.credentialId || '-';
   $('credExpiry').textContent = state.credentialExpiresAt ? fmtTime(state.credentialExpiresAt) : '-';
@@ -1057,7 +1072,29 @@ async function saveToken() {
   }
 }
 
+const pairNoticeKey = 'meerkat.pair-success.v1';
+function clearPairNotice() {
+  $('pairSuccess').classList.add('hidden');
+}
+function showPairNotice(notice) {
+  $('successHub').textContent = notice.hubAddr;
+  $('successDevice').textContent = notice.deviceName;
+  $('pairSuccess').classList.remove('hidden');
+  $('pairSuccess').scrollIntoView({block:'nearest'});
+  toast('配对成功，已连接 ' + notice.hubAddr, 3000);
+}
+function restorePairNotice() {
+  try {
+    const raw = sessionStorage.getItem(pairNoticeKey);
+    if (!raw) return;
+    sessionStorage.removeItem(pairNoticeKey);
+    const notice = JSON.parse(raw);
+    const age = Date.now() - notice.at;
+    if (Number.isFinite(age) && age >= 0 && age <= 30000 && typeof notice.hubAddr === 'string' && typeof notice.deviceName === 'string') showPairNotice(notice);
+  } catch (_) { /* Ignore unavailable storage or an incomplete notice. */ }
+}
 async function clearToken() {
+  clearPairNotice();
   if (!confirm('解除配对并清除已保存的凭证？')) return;
   try {
     await getJSON('/client/config/clear');
@@ -1098,9 +1135,9 @@ function setupPairingScanner() {
   };
   let pendingId = '';
   button.classList.remove('hidden');
-  $('pairCodeHelp').textContent = '在 Hub 的「设置 → 网络 → 移动设备」生成手机配对码，可扫码或手动输入。';
   button.addEventListener('click', (event) => {
     if (!event.isTrusted || pendingId) return;
+    clearPairNotice();
     pendingId = Array.from(crypto.getRandomValues(new Uint8Array(8)), byte => byte.toString(16).padStart(2, '0')).join('');
     status.textContent = '';
     $('pairCodeInput').value = '';
@@ -1148,6 +1185,7 @@ function showHubAddressError(message) {
 async function pairDevice(event) {
   event.preventDefault();
   if ($('pairBtn').disabled) return;
+  clearPairNotice();
   const input = $('hubAddrInput');
   const address = input.value.trim();
   if (!address) {
@@ -1177,7 +1215,9 @@ async function pairDevice(event) {
     input.value = payload.hub_addr;
     $('setHub').textContent = payload.hub_addr;
     showHubAddressError('');
+    const notice = {hubAddr: payload.hub_addr, deviceName: payload.credential_label || label, at: Date.now()};
     if (payload.hub_changed) {
+      try { sessionStorage.setItem(pairNoticeKey, JSON.stringify(notice)); } catch (_) { /* Still reset the old Hub view if storage is unavailable. */ }
       // Drop the previous Hub's iframe and in-flight list renders together.
       location.reload();
       return;
@@ -1191,7 +1231,7 @@ async function pairDevice(event) {
     $('pairCodeInput').value = '';
     updateTokenHint();
     updateAuthUI();
-    toast('配对成功');
+    showPairNotice(notice);
     await refreshState();
     await loadDevices();
     await loadTasks();
@@ -1406,6 +1446,8 @@ $('copyAuthBtn2').addEventListener('click', copyAuth);
 $('probeBtn').addEventListener('click', probeHub);
 $('saveTokenBtn').addEventListener('click', saveToken);
 $('clearTokenBtn').addEventListener('click', clearToken);
+$('successDismiss').addEventListener('click', clearPairNotice);
+$('successDevices').addEventListener('click', () => { clearPairNotice(); navigate('#/devices'); });
 setupPairingScanner();
 $('pairForm').addEventListener('submit', pairDevice);
 $('hubAddrInput').addEventListener('blur', () => { if ($('hubAddrInput').dataset.edited) void saveHubDraft(); });
@@ -1497,6 +1539,7 @@ updateAuthUI();
 refreshState();
 setInterval(refreshState, 2000);
 route();
+restorePairNotice();
 </script>
 </body>
 </html>

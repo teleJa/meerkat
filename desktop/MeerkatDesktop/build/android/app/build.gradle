@@ -14,8 +14,8 @@ android {
         applicationId "com.meerkat.app"
         minSdk 21
         targetSdk 35
-        versionCode 3
-        versionName "0.2.2+qr2"
+        versionCode 4
+        versionName "0.2.2+qr3"
 
         // Configure supported ABIs
         ndk {

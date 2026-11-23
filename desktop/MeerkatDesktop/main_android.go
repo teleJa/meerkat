@@ -366,7 +366,7 @@ func (c *androidClient) handlePair(w http.ResponseWriter, r *http.Request) {
 	state := c.client.Snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "configured": true, "auth_state": state.AuthState, "credential_id": state.CredentialID,
-		"hub_addr": state.HubAddr, "hub_changed": before != c.client.Config().HubURL,
+		"credential_label": state.CredentialLabel, "hub_addr": state.HubAddr, "hub_changed": before != c.client.Config().HubURL,
 	})
 }
 

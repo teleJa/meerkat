@@ -67,7 +67,7 @@ final class PairingQrScanner {
         ScanOptions options = new ScanOptions()
                 .setCaptureActivity(PairingCaptureActivity.class)
                 .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                .setPrompt("将 Hub 上的手机配对二维码对准取景框")
+                .setPrompt("在电脑 Hub 打开「设置 → 网络 → 移动设备 → 生成配对码」\n将二维码对准取景框")
                 .setBeepEnabled(false)
                 .setOrientationLocked(false)
                 .addExtra(Intents.Scan.SHOW_MISSING_CAMERA_PERMISSION_DIALOG, false);
