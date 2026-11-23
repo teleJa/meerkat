@@ -1081,7 +1081,7 @@ function showPairNotice(notice) {
   $('successDevice').textContent = notice.deviceName;
   $('pairSuccess').classList.remove('hidden');
   $('pairSuccess').scrollIntoView({block:'nearest'});
-  toast('配对成功，已连接 ' + notice.hubAddr, 3000);
+  toast('配对成功 · ' + notice.deviceName + ' 已连接 ' + notice.hubAddr, 3000);
 }
 function restorePairNotice() {
   try {
