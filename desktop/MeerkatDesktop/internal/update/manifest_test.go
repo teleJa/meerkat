@@ -1,6 +1,7 @@
 package update
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
@@ -44,6 +45,7 @@ func TestSignedUpdateDownload(t *testing.T) {
 		t.Fatal("test requires the 127.0.0.1 loopback listener")
 	}
 	manifest := Manifest{Version: "0.2.0", Platforms: map[string]Platform{
+		"android-arm64": {URL: server.URL + "/app.apk", SHA256: hex.EncodeToString(hash[:]), VersionCode: 5, MinSDK: 21, Size: int64(len(installer))},
 		"windows-amd64": {URL: server.URL + "/setup.exe", SHA256: hex.EncodeToString(hash[:])},
 	}}
 	payload, err := json.Marshal(manifest)
@@ -63,6 +65,21 @@ func TestSignedUpdateDownload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Run("Android selection alongside Windows", func(t *testing.T) {
+		for _, tc := range []struct {
+			code int64
+			sdk  int
+			want bool
+		}{{4, 21, true}, {5, 35, false}, {6, 35, false}, {4, 20, false}} {
+			p, ok, err := manifest.AndroidPackage(tc.code, tc.sdk)
+			if err != nil || ok != tc.want || p.VersionCode != 5 {
+				t.Fatalf("selection %v %v %v", p, ok, err)
+			}
+		}
+		if _, ok, err := (Manifest{}).AndroidPackage(4, 35); ok || err != nil {
+			t.Fatal("missing Android entry")
+		}
+	})
 	t.Run("installer verified", func(t *testing.T) {
 		dir := t.TempDir()
 		if err := Download(platform, dir, func(_, _ int64) {}); err != nil {
@@ -159,5 +176,27 @@ func TestVersionOrdering(t *testing.T) {
 		if actual := Newer(tc.latest, tc.installed); actual != tc.want {
 			t.Errorf("Newer(%s, %s) = %v, expected %v", tc.latest, tc.installed, actual, tc.want)
 		}
+	}
+}
+
+func TestCancelAndroidDownload(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("first chunk"))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	hash := sha256.Sum256([]byte("full package"))
+	p := Platform{URL: server.URL, SHA256: hex.EncodeToString(hash[:])}
+	err := DownloadTo(ctx, p, dir+"/update.apk", func(int64, int64) { cancel() })
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation, got %v", err)
+	}
+	files, err := os.ReadDir(dir)
+	if err != nil || len(files) != 0 {
+		t.Fatalf("partial left behind: %v, %v", files, err)
 	}
 }

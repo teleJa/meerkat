@@ -1,6 +1,6 @@
 import { createHash, createPrivateKey, createPublicKey, sign } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { createReadStream, readFileSync, writeFileSync } from 'node:fs';
+import { createReadStream, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -61,14 +61,35 @@ if (action === 'manifest' || action === 'publish') {
   for await (const bytes of createReadStream(installer)) hash.update(bytes);
   const notes = process.env.MEERKAT_RELEASE_NOTES_FILE ? readFileSync(process.env.MEERKAT_RELEASE_NOTES_FILE, 'utf8') : `Meerkat ${tag}`;
   const url = action === 'manifest' && manifestURL ? manifestURL : `https://github.com/${repository}/releases/download/${tag}/${encodeURIComponent(basename(installer))}`;
-  const manifest = Buffer.from(JSON.stringify({ version, notes, platforms: { 'windows-amd64': { url, sha256: hash.digest('hex') } } }));
+  const platforms = { 'windows-amd64': { url, sha256: hash.digest('hex') } };
+  const apk = process.env.MEERKAT_ANDROID_APK || (action === 'publish' ? join(dirname(installer), `Meerkat-Android-${version}.apk`) : '');
+  if (apk) {
+    const name = `Meerkat-Android-${version}.apk`;
+    if (basename(apk) !== name) throw new Error(`Expected ${name}`);
+    const tool = command => process.env.ANDROID_BUILD_TOOLS ? join(process.env.ANDROID_BUILD_TOOLS, command) : command;
+    const inspect = (command, args) => {
+      const result = spawnSync(tool(command), args, { encoding: 'utf8' });
+      if (result.status !== 0) throw new Error(result.error?.message || result.stderr || `${command} failed`);
+      return result.stdout;
+    };
+    const cert = inspect('apksigner', ['verify', '--print-certs', apk]);
+    if (!cert.includes('certificate SHA-256 digest: 190af4deaa53668445ccfe27e7fdbfb509c142d80c8b767172ea48040737cc5d')) throw new Error('Unexpected Android signing certificate');
+    const info = inspect('aapt', ['dump', 'badging', apk]);
+    const pkg = /^package: name='com\.meerkat\.app' versionCode='(\d+)' versionName='([^']+)'/m.exec(info);
+    const minSdk = Number(/^sdkVersion:'(\d+)'/m.exec(info)?.[1]);
+    if (!pkg || pkg[2] !== version || !Number(pkg[1]) || !minSdk || !/^native-code: .*'arm64-v8a'/m.test(info)) throw new Error('APK metadata does not match Android release');
+    const digest = createHash('sha256');
+    for await (const bytes of createReadStream(apk)) digest.update(bytes);
+    platforms['android-arm64'] = {url: `https://github.com/${repository}/releases/download/${tag}/${name}`, sha256:digest.digest('hex'), versionCode:Number(pkg[1]), minSdk, size:statSync(apk).size};
+  }
+  const manifest = Buffer.from(JSON.stringify({ version, notes, platforms }));
   const output = join(dirname(installer), 'latest.json');
   const envelope = JSON.stringify({ manifest: manifest.toString('base64'), signature: sign(null, manifest, privateKey).toString('base64') }) + '\n';
   if (Buffer.byteLength(envelope) > 64 * 1024) throw new Error('Update manifest exceeds the client size limit.');
   writeFileSync(output, envelope);
   if (action === 'publish') {
     // Publish the verified source tag rather than letting GitHub create it.
-    const published = spawnSync('gh', ['release', 'create', tag, installer, output, '--repo', repository, '--verify-tag', '--latest', '--title', `Meerkat ${tag}`, '--notes', notes], { stdio: 'inherit' });
+    const published = spawnSync('gh', ['release', 'create', tag, installer, apk, output, '--repo', repository, '--verify-tag', '--latest', '--title', `Meerkat ${tag}`, '--notes', notes], { stdio: 'inherit' });
     if (published.error) throw published.error;
     process.exitCode = published.status ?? 1;
   } else {

@@ -344,6 +344,27 @@
       </div>
     </div>
 
+    <section class="card" id="updateCard">
+      <h3>关于与更新</h3>
+      <div id="updateCurrent">正在读取当前版本…</div>
+      <p class="muted" id="updateLast"></p>
+      <p role="status" id="updateStatus"></p>
+      <details id="updateNotes" hidden><summary>更新说明</summary><p></p></details>
+      <progress id="updateProgress" aria-label="安装包下载进度" hidden style="width:100%"></progress>
+      <div class="row" id="updateActions">
+        <button type="button" data-update="check" hidden>检查更新</button>
+        <button type="button" data-update="download" hidden>下载更新</button>
+        <button type="button" data-update="cancel" hidden>取消下载</button>
+        <button type="button" data-update="install" hidden>立即安装</button>
+        <button type="button" data-update="permission" hidden>去开启权限</button>
+        <button type="button" data-update="later" hidden>稍后再说</button>
+      </div>
+      <div id="updatePrefs" hidden>
+        <label style="display:block;padding:8px 0"><input id="updateAuto" type="checkbox" style="width:auto"> 自动检查并下载更新</label>
+        <label style="display:block;padding:8px 0"><input id="updateWifi" type="checkbox" style="width:auto"> 仅在 Wi-Fi 等非计费网络下自动下载</label>
+      </div>
+    </section>
+
     <div id="authWarning" class="banner hidden"></div>
 
     <div class="card">
@@ -1540,6 +1561,41 @@ refreshState();
 setInterval(refreshState, 2000);
 route();
 restorePairNotice();
+
+function bindUpdater() {
+  const bridge = window.meerkatAppUpdater;
+  if (!bridge) { $('updateCurrent').textContent = '此 WebView 暂不支持应用内更新'; return; }
+  let last, poll;
+  const send = action => bridge.postMessage(action);
+  const mb = size => (size / 1048576).toFixed(1) + ' MB';
+  bridge.onmessage = event => {
+    last = JSON.parse(event.data);
+    const {phase, current, version, size, bytes, message, metered} = last;
+    const status = {loading:'正在读取更新状态', idle:'尚未检查更新', checking:'正在检查更新…', latest:'当前已是最新版本', available:`发现新版本 ${version}（${mb(size)}）`, downloading:`正在下载 ${version} · ${size ? Math.floor(bytes * 100 / size) : 0}%（${mb(bytes)} / ${mb(size)}）`, verifying:'正在校验安装包', ready:`新版本 ${version} 已就绪`, permission:'需要允许安装未知应用', installing:'等待系统安装确认', error:'更新失败', disabled:'当前为开发构建，未启用自动更新'};
+    $('updateCurrent').textContent = '当前版本 '+current;
+    $('updateLast').textContent = last.last ? '上次检查 '+new Date(last.last).toLocaleString() : '';
+    const text=[status[phase],message || (phase==='available' && metered && last.wifi ? '当前为计费网络，自动下载已暂停。' : '')].filter(Boolean).join(' · ');
+    if ($('updateStatus').textContent!==text) $('updateStatus').textContent=text;
+    $('updateNotes').hidden=!last.notes || !['available','ready'].includes(phase);
+    $('updateNotes').querySelector('p').textContent=last.notes || '';
+    $('updateProgress').hidden=phase!=='downloading';
+    $('updateProgress').max=size || 1; $('updateProgress').value=bytes;
+    const actions={check:['idle','latest','available','error','ready'],download:['available'],cancel:['downloading'],install:['ready'],permission:['permission'],later:['permission']};
+    for(const btn of $('updateActions').children) btn.hidden=!actions[btn.dataset.update].includes(phase);
+    $('updateActions').querySelector('[data-update="download"]').textContent=metered?'使用流量下载':'下载更新';
+    $('updatePrefs').hidden=phase==='disabled';$('updateAuto').checked=last.auto;$('updateWifi').checked=last.wifi;$('updateWifi').disabled=!last.auto;
+    clearTimeout(poll);
+    if(!document.hidden && (state.tab==='settings' || location.hash==='#/settings')) poll=setTimeout(()=>send('state'),phase==='downloading'?400:1500);
+  };
+  $('updateActions').addEventListener('click',e=>{
+    let action=e.target.dataset.update;if(!action)return;
+    if(action==='download' && last.metered){if(!confirm(`当前为计费网络，下载约 ${mb(last.size)}，继续吗？`))return;action='cellular';}
+    send(action);
+  });
+  $('updateAuto').onchange=()=>send('auto');$('updateWifi').onchange=()=>send('wifi');
+  window.addEventListener('hashchange',()=>send('state'));document.addEventListener('visibilitychange',()=>{if(!document.hidden)send('state');});send('state');
+}
+bindUpdater();
 </script>
 </body>
 </html>

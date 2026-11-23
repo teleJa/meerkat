@@ -61,6 +61,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int FILE_PICKER_REQUEST = 7001;
 
     private WebView webView;
+    private AppUpdater updater;
     private WailsBridge bridge;
     // Battery: system-event receivers are registered only while the activity is
     // in the foreground (onStart) and torn down in onStop, so background battery/
@@ -111,6 +112,7 @@ public class MainActivity extends AppCompatActivity {
         // Set up WebView
         setupWebView();
 
+        updater = new AppUpdater(this, webView);
         PairingQrScanner.attach(this, webView, WAILS_SCHEME + "://" + WAILS_HOST);
 
         // Load the application
@@ -916,6 +918,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (updater != null) updater.resume();
         if (bridge != null) {
             bridge.onResume();
         }
@@ -924,6 +927,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
+        if (updater != null) updater.pause();
         if (bridge != null) {
             bridge.onPause();
         }
@@ -952,6 +956,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (updater != null) updater.close();
         unregisterSystemEventReceivers();
         if (bridge != null) {
             bridge.shutdown();

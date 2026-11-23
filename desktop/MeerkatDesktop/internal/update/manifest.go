@@ -1,6 +1,7 @@
 package update
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
@@ -22,8 +23,11 @@ const (
 )
 
 type Platform struct {
-	URL    string `json:"url"`
-	SHA256 string `json:"sha256"`
+	URL         string `json:"url"`
+	SHA256      string `json:"sha256"`
+	VersionCode int64  `json:"versionCode,omitempty"`
+	MinSDK      int    `json:"minSdk,omitempty"`
+	Size        int64  `json:"size,omitempty"`
 }
 
 type Manifest struct {
@@ -75,6 +79,20 @@ func (m Manifest) Package(goos, goarch string) (Platform, error) {
 	return platform, nil
 }
 
+func (m Manifest) AndroidPackage(current int64, sdk int) (Platform, bool, error) {
+	if _, exists := m.Platforms["android-arm64"]; !exists {
+		return Platform{}, false, nil
+	}
+	p, err := m.Package("android", "arm64")
+	if err != nil {
+		return Platform{}, false, err
+	}
+	if p.VersionCode <= 0 || p.MinSDK <= 0 || p.Size <= 0 || p.Size > MaxPackage {
+		return Platform{}, false, fmt.Errorf("Android 安装包元信息无效")
+	}
+	return p, p.VersionCode > current && p.MinSDK <= sdk, nil
+}
+
 func parseURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Hostname() == "" || u.User != nil || u.Fragment != "" || (u.Scheme != "https" && !(u.Scheme == "http" && u.Hostname() == "127.0.0.1")) {
@@ -94,7 +112,7 @@ func parseHash(value string) ([sha256.Size]byte, error) {
 	return hash, nil
 }
 
-func get(raw string, timeout time.Duration) (*http.Response, error) {
+func get(ctx context.Context, raw string, timeout time.Duration) (*http.Response, error) {
 	initial, err := parseURL(raw)
 	if err != nil {
 		return nil, err
@@ -109,7 +127,11 @@ func get(raw string, timeout time.Duration) (*http.Response, error) {
 			return err
 		},
 	}
-	resp, err := client.Get(initial.String())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, initial.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +146,7 @@ func Fetch(raw string, key ed25519.PublicKey) ([]byte, Manifest, error) {
 	if len(key) != ed25519.PublicKeySize {
 		return nil, Manifest{}, fmt.Errorf("此构建未配置更新签名公钥")
 	}
-	resp, err := get(raw, 8*time.Second)
+	resp, err := get(context.Background(), raw, 8*time.Second)
 	if err != nil {
 		return nil, Manifest{}, err
 	}
@@ -150,11 +172,15 @@ func (w *progressWriter) Write(data []byte) (int, error) {
 }
 
 func Download(platform Platform, target string, progress func(int64, int64)) error {
+	return DownloadTo(context.Background(), platform, PackagePath(target), progress)
+}
+
+func DownloadTo(ctx context.Context, platform Platform, target string, progress func(int64, int64)) error {
 	want, err := parseHash(platform.SHA256)
 	if err != nil {
 		return err
 	}
-	resp, err := get(platform.URL, 10*time.Minute)
+	resp, err := get(ctx, platform.URL, 10*time.Minute)
 	if err != nil {
 		return err
 	}
@@ -162,7 +188,7 @@ func Download(platform Platform, target string, progress func(int64, int64)) err
 	if resp.ContentLength > MaxPackage {
 		return fmt.Errorf("更新安装包超过大小限制")
 	}
-	file, err := os.CreateTemp(target, "download-*.part")
+	file, err := os.CreateTemp(filepath.Dir(target), "download-*.part")
 	if err != nil {
 		return err
 	}
@@ -173,13 +199,13 @@ func Download(platform Platform, target string, progress func(int64, int64)) err
 	if err != nil {
 		return err
 	}
-	if n == 0 || n > MaxPackage || (resp.ContentLength >= 0 && n != resp.ContentLength) || [sha256.Size]byte(hash.Sum(nil)) != want {
+	if n == 0 || n > MaxPackage || (platform.Size > 0 && n != platform.Size) || (resp.ContentLength >= 0 && n != resp.ContentLength) || [sha256.Size]byte(hash.Sum(nil)) != want {
 		return fmt.Errorf("更新安装包 SHA-256 或大小校验失败")
 	}
 	if err := file.Close(); err != nil {
 		return err
 	}
-	return os.Rename(file.Name(), PackagePath(target))
+	return os.Rename(file.Name(), target)
 }
 
 func PackagePath(staging string) string { return filepath.Join(staging, "Meerkat-Setup.exe") }
