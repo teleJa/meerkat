@@ -160,7 +160,7 @@ function LiveDevicesContent() {
               <CardHeader>
                 <CardTitle className="text-sm">还没有设备接入</CardTitle>
                 <CardDescription>
-                  桌面端点「接入设备」生成邀请码，在目标电脑的 Meerkat「设置 → 加入工作区」粘贴。手机请到「设置 → 移动设备」生成配对码。
+                  桌面端点「接入设备」生成邀请码，在目标电脑的 Meerkat「设置 → 加入工作区」粘贴。手机请到「设置 → 网络 → 移动设备」生成配对码。
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -369,7 +369,7 @@ function PairingTokenDialog() {
         <DialogHeader>
           <DialogTitle>邀请设备加入</DialogTitle>
           <DialogDescription>
-            在目标电脑的 Meerkat「设置 → 加入工作区」粘贴桌面邀请码。手机配对请到 Hub 的「设置 → 移动设备」。
+            在目标电脑的 Meerkat「设置 → 加入工作区」粘贴桌面邀请码。手机配对请到 Hub 的「设置 → 网络 → 移动设备」。
           </DialogDescription>
         </DialogHeader>
         {pending ? (

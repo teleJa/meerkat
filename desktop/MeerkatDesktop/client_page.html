@@ -292,7 +292,7 @@
         <h3 style="margin:0">设备配对</h3>
         <span id="credChip" class="chip">未配对</span>
       </div>
-      <div id="pairCodeHelp" class="muted" style="margin:7px 0 9px">在 Hub 的「设置 → 移动设备」生成手机配对码。配对后获得只读设备凭证。</div>
+      <div id="pairCodeHelp" class="muted" style="margin:7px 0 9px">在 Hub 的「设置 → 网络 → 移动设备」生成手机配对码。配对后获得只读设备凭证。</div>
       <div class="row wrap" style="margin-bottom:8px">
         <input id="pairCodeInput" class="grow" type="text" placeholder="MEERKAT-XXXX-XXXX"
                aria-label="手机配对码" aria-describedby="pairCodeHelp" enterkeyhint="done"
@@ -1070,21 +1070,21 @@ async function clearToken() {
 
 function setupPairingScanner() {
   const scanner = window.meerkatPairingScanner;
-  if (typeof scanner?.postMessage !== 'function') return;
+  if (!scanner || typeof scanner.postMessage !== 'function') return;
   const button = $('scanPairBtn');
   const status = $('scanPairStatus');
   const messages = {
     permission: '未允许使用相机。你可以重新扫码并授权，或手动输入配对码。',
     permission_settings: '相机权限已关闭。可到系统设置 → 应用 → Meerkat → 权限开启，或手动输入配对码。',
     cancelled: '已取消扫码。你可以重扫或手动输入配对码。',
-    desktop_invite: '这是桌面邀请码，不是 Meerkat 手机配对码。请到 Hub 的「设置 → 移动设备」生成。',
+    desktop_invite: '这是桌面邀请码，不是 Meerkat 手机配对码。请到 Hub 的「设置 → 网络 → 移动设备」生成。',
     invalid: '不是 Meerkat 配对码。请重扫或手动输入。',
     busy: '扫码正在进行。请返回后重试。',
     unavailable: '无法打开扫码相机，请手动输入配对码。',
   };
   let pendingId = '';
   button.classList.remove('hidden');
-  $('pairCodeHelp').textContent = '在 Hub 的「设置 → 移动设备」生成手机配对码，可扫码或手动输入。';
+  $('pairCodeHelp').textContent = '在 Hub 的「设置 → 网络 → 移动设备」生成手机配对码，可扫码或手动输入。';
   button.addEventListener('click', (event) => {
     if (!event.isTrusted || pendingId) return;
     pendingId = Array.from(crypto.getRandomValues(new Uint8Array(8)), byte => byte.toString(16).padStart(2, '0')).join('');
@@ -1105,7 +1105,7 @@ function setupPairingScanner() {
     } catch (e) {
       return;
     }
-    if (!pendingId || result?.id !== pendingId) return;
+    if (!pendingId || !result || result.id !== pendingId) return;
     pendingId = '';
     button.disabled = false;
     if (result.status === 'ok') {
