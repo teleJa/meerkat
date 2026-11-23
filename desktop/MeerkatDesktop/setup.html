@@ -39,7 +39,7 @@
 <div class="card">
   <a class="back" id="back" href="/welcome" hidden>← 返回，重新选择</a>
   <h1>加入 Meerkat 工作区</h1>
-  <p>在 Hub 机器的 Meerkat「实时设备 → 接入设备」中生成邀请码（可复制文本或扫描二维码），粘贴到这里。App 会写入本机 Edge 配置，重启后先加入内嵌 Tailscale 网络、再自动完成配对。</p>
+  <p>在 Hub 的 Meerkat「实时设备 → 接入设备」生成桌面邀请码，复制并粘贴到这里。App 写入本机 Edge 配置后重启，加入内嵌 Tailscale 并自动配对。手机配对码在 Hub 的「设置 → 移动设备」生成。</p>
   <form id="join-form">
     <label for="code">邀请码</label>
     <textarea id="code" placeholder="MEERKAT1:..." required autofocus></textarea>
@@ -55,7 +55,7 @@
     <ol>
       <li>打开那台已经在跑 Meerkat 的机器（它是「Hub」）。</li>
       <li>左侧进入「实时设备」，点右上角 <strong>接入设备</strong>。</li>
-      <li>复制出现的邀请码，或直接用手机扫二维码。</li>
+      <li>复制生成的桌面邀请码，粘贴到上方输入框。</li>
       <li>邀请码一次性有效、默认 10 分钟；过期就回去再点一次「接入设备」。</li>
     </ol>
     <div style="margin-top:8px">如果 Hub 提示「内嵌网络尚未就绪」，先在那台机器的「设置 → 网络」里完成一次 Tailscale 登录，再生成邀请码。</div>

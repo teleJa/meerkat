@@ -160,7 +160,7 @@ function LiveDevicesContent() {
               <CardHeader>
                 <CardTitle className="text-sm">还没有设备接入</CardTitle>
                 <CardDescription>
-                  点击「接入设备」生成邀请码或二维码，在目标机器的 Meerkat 里打开「设置 → 加入工作区」粘贴即可；配对由 App 自动完成，不需要命令行。
+                  桌面端点「接入设备」生成邀请码，在目标电脑的 Meerkat「设置 → 加入工作区」粘贴。手机请到「设置 → 移动设备」生成配对码。
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -369,7 +369,7 @@ function PairingTokenDialog() {
         <DialogHeader>
           <DialogTitle>邀请设备加入</DialogTitle>
           <DialogDescription>
-            在目标机器的 Meerkat 「设置 → 加入工作区」粘贴邀请码。邀请码一次性有效，默认 10 分钟内使用。
+            在目标电脑的 Meerkat「设置 → 加入工作区」粘贴桌面邀请码。手机配对请到 Hub 的「设置 → 移动设备」。
           </DialogDescription>
         </DialogHeader>
         {pending ? (
@@ -384,7 +384,7 @@ function PairingTokenDialog() {
         ) : invite ? (
           <div className="space-y-3">
             <div className="flex justify-center rounded-lg border bg-white p-3" data-testid="pairing-qr">
-              <QrCodeImage value={invite.code} size={176} label="邀请码二维码" />
+              <QrCodeImage value={invite.code} size={176} label="桌面邀请码二维码" />
             </div>
             <div className="rounded-lg border bg-zinc-950 px-3 py-2.5">
               <div className="flex min-w-0 items-start justify-between gap-2">
@@ -407,7 +407,7 @@ function PairingTokenDialog() {
               </div>
             </div>
             <p className="text-[11px] leading-relaxed text-muted-foreground">
-              二维码与邀请码内容相同，同样包含一次性配对令牌，请勿公开分享。目标机器首次加入需要在浏览器完成一次 Tailscale 登录，App 会自动打开登录页。
+              桌面邀请码和二维码内容相同，默认 10 分钟内有效，只用一次，请勿公开分享。首次加入时，App 会打开 Tailscale 登录页。
             </p>
             <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
               <span className="min-w-0 truncate">Hub: {invite.hub_url || "—"}</span>

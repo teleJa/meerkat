@@ -711,7 +711,7 @@ function MobileDevicesSection() {
               <QrCodeImage value={pairing.code} size={132} label="移动设备配对码二维码" />
             </div>
             <div className="min-w-0 flex-1 space-y-2">
-              <div className="text-[11px] text-muted-foreground">在 App「设置 → 设备配对」输入配对码，10 分钟内有效、只用一次。</div>
+              <div className="text-[11px] text-muted-foreground">在手机 Meerkat「设置 → 设备配对」点「扫码配对」，或手动输入下方配对码。10 分钟内有效，只用一次。</div>
               <div className="flex items-start gap-2 rounded-lg border bg-zinc-950 px-3 py-2">
                 <code data-testid="mobile-pairing-code" className="min-w-0 flex-1 select-all break-all font-mono text-xs text-zinc-100">
                   {pairing.code}
@@ -739,7 +739,7 @@ function MobileDevicesSection() {
           <div className="px-5 py-8 text-center">
             <Smartphone className="mx-auto size-6 text-muted-foreground/50" />
             <div className="mt-2 text-xs font-medium">还没有移动设备配对</div>
-            <div className="mt-1 text-[11px] text-muted-foreground">生成配对码后，在 Android App 的设置页输入即可。</div>
+            <div className="mt-1 text-[11px] text-muted-foreground">生成后，在手机 Meerkat 的「设置 → 设备配对」扫码或手动输入。</div>
           </div>
         ) : (
           credentials.map((credential) => (

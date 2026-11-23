@@ -292,11 +292,14 @@
         <h3 style="margin:0">设备配对</h3>
         <span id="credChip" class="chip">未配对</span>
       </div>
-      <div class="muted" style="margin:7px 0 9px">在 Hub 设置页「移动设备」生成配对码，输入后换取只读设备凭证。凭证存在 Android Keystore，不写日志。</div>
-      <div class="row" style="margin-bottom:8px">
+      <div id="pairCodeHelp" class="muted" style="margin:7px 0 9px">在 Hub 的「设置 → 移动设备」生成手机配对码。配对后获得只读设备凭证。</div>
+      <div class="row wrap" style="margin-bottom:8px">
         <input id="pairCodeInput" class="grow" type="text" placeholder="MEERKAT-XXXX-XXXX"
+               aria-label="手机配对码" aria-describedby="pairCodeHelp" enterkeyhint="done"
                autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false">
+        <button type="button" class="secondary hidden" id="scanPairBtn">扫码配对</button>
       </div>
+      <div id="scanPairStatus" class="muted" role="status"></div>
       <div class="row" style="margin-bottom:8px">
         <input id="pairLabelInput" class="grow" type="text" placeholder="设备名称（可选，例如 iQOO 10）"
                autocomplete="off" autocapitalize="sentences" autocorrect="off" spellcheck="false">
@@ -1065,6 +1068,55 @@ async function clearToken() {
   }
 }
 
+function setupPairingScanner() {
+  const scanner = window.meerkatPairingScanner;
+  if (typeof scanner?.postMessage !== 'function') return;
+  const button = $('scanPairBtn');
+  const status = $('scanPairStatus');
+  const messages = {
+    permission: '未允许使用相机。你可以重新扫码并授权，或手动输入配对码。',
+    permission_settings: '相机权限已关闭。可到系统设置 → 应用 → Meerkat → 权限开启，或手动输入配对码。',
+    cancelled: '已取消扫码。你可以重扫或手动输入配对码。',
+    desktop_invite: '这是桌面邀请码，不是 Meerkat 手机配对码。请到 Hub 的「设置 → 移动设备」生成。',
+    invalid: '不是 Meerkat 配对码。请重扫或手动输入。',
+    busy: '扫码正在进行。请返回后重试。',
+    unavailable: '无法打开扫码相机，请手动输入配对码。',
+  };
+  let pendingId = '';
+  button.classList.remove('hidden');
+  $('pairCodeHelp').textContent = '在 Hub 的「设置 → 移动设备」生成手机配对码，可扫码或手动输入。';
+  button.addEventListener('click', (event) => {
+    if (!event.isTrusted || pendingId) return;
+    pendingId = Array.from(crypto.getRandomValues(new Uint8Array(8)), byte => byte.toString(16).padStart(2, '0')).join('');
+    status.textContent = '';
+    button.disabled = true;
+    try {
+      scanner.postMessage(pendingId);
+    } catch (e) {
+      pendingId = '';
+      button.disabled = false;
+      status.textContent = messages.unavailable;
+    }
+  });
+  scanner.onmessage = (event) => {
+    let result;
+    try {
+      result = JSON.parse(event.data);
+    } catch (e) {
+      return;
+    }
+    if (!pendingId || result?.id !== pendingId) return;
+    pendingId = '';
+    button.disabled = false;
+    if (result.status === 'ok') {
+      $('pairCodeInput').value = result.code;
+      status.textContent = '已填入手机配对码。请点「配对」。';
+    } else {
+      status.textContent = messages[result.status] || messages.unavailable;
+    }
+  };
+}
+
 async function pairDevice() {
   const code = $('pairCodeInput').value.trim();
   if (!code) { toast('先输入配对码'); return; }
@@ -1274,6 +1326,7 @@ $('copyAuthBtn2').addEventListener('click', copyAuth);
 $('probeBtn').addEventListener('click', probeHub);
 $('saveTokenBtn').addEventListener('click', saveToken);
 $('clearTokenBtn').addEventListener('click', clearToken);
+setupPairingScanner();
 $('pairBtn').addEventListener('click', pairDevice);
 $('rotateBtn').addEventListener('click', rotateCredential);
 $('unpairBtn').addEventListener('click', clearToken);

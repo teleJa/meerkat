@@ -111,6 +111,8 @@ public class MainActivity extends AppCompatActivity {
         // Set up WebView
         setupWebView();
 
+        PairingQrScanner.attach(this, webView, WAILS_SCHEME + "://" + WAILS_HOST);
+
         // Load the application
         loadApplication();
     }
