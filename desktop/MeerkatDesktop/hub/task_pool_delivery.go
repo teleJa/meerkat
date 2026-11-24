@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -40,14 +41,24 @@ func (h *Hub) settlePoolDelivery(ctx context.Context, id, status, code string, n
 	if err != nil {
 		return err
 	}
+	var itemID, title string
 	if count == 1 && status == "failed" {
+		if err := tx.QueryRowContext(ctx, `SELECT i.id,i.title FROM task_pool_items i JOIN task_pool_deliveries d ON d.item_id=i.id WHERE d.id=?`, id).Scan(&itemID, &title); err != nil {
+			return err
+		}
 		_, err := tx.ExecContext(ctx, `UPDATE task_pool_items SET status='blocked',revision=revision+1,updated_at=?
 			WHERE status='processing' AND EXISTS (SELECT 1 FROM task_pool_deliveries d WHERE d.id=? AND d.item_id=task_pool_items.id AND d.assignment_rev=task_pool_items.assignment_rev)`, nowISO(now), id)
 		if err != nil {
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if itemID != "" {
+		h.notifyPool("delivery_failed", itemID, title, id)
+	}
+	return nil
 }
 
 func (h *Hub) sendPoolDelivery(ctx context.Context, delivery poolDelivery) (string, string) {
@@ -104,7 +115,7 @@ func (h *Hub) runPoolDeliveries(ctx context.Context) {
 // expirePoolDeliveries moves only current, unacknowledged assignments to blocked.
 // An old delivery cannot block a reassigned card or one that already made progress.
 func (h *Hub) expirePoolDeliveries(ctx context.Context, now time.Time) (int64, error) {
-	result, err := h.db.ExecContext(ctx, `UPDATE task_pool_items AS item
+	rows, err := h.db.QueryContext(ctx, `UPDATE task_pool_items AS item
 		SET status='blocked', revision=revision+1, updated_at=?
 		WHERE item.status='processing' AND EXISTS (
 			SELECT 1 FROM task_pool_deliveries AS delivery
@@ -113,11 +124,26 @@ func (h *Hub) expirePoolDeliveries(ctx context.Context, now time.Time) (int64, e
 			AND julianday(COALESCE(delivery.queued_at,delivery.started_at,delivery.created_at)) <= julianday(?)
 			AND delivery.rowid=(SELECT MAX(latest.rowid) FROM task_pool_deliveries AS latest
 				WHERE latest.item_id=item.id AND latest.assignment_rev=item.assignment_rev)
-		)`, nowISO(now), nowISO(now.Add(-poolDeliveryTimeout)))
+		) RETURNING id,title,revision`, nowISO(now), nowISO(now.Add(-poolDeliveryTimeout)))
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	defer rows.Close()
+	var items []poolItem
+	for rows.Next() {
+		var item poolItem
+		if err := rows.Scan(&item.ID, &item.Title, &item.Revision); err != nil {
+			return 0, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, item := range items {
+		h.notifyPool("blocked", item.ID, item.Title, item.ID+":"+strconv.Itoa(item.Revision))
+	}
+	return int64(len(items)), nil
 }
 
 func (h *Hub) retryPoolDelivery(ctx context.Context, id string, revision int, actor string, now time.Time) (poolItem, error) {

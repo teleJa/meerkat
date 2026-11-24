@@ -114,6 +114,7 @@ func (h *Hub) handleWS(w http.ResponseWriter, r *http.Request) {
 	detail, _ := json.Marshal(map[string]any{"remote": r.RemoteAddr, "edge_version": hello.EdgeVersion})
 	detailStr := string(detail)
 	h.logEvent("device.connected", &device.ID, &detailStr)
+	h.signalNotificationDevices()
 
 	_ = client.send(map[string]any{
 		"type": "hello.ack", "protocol_version": ProtocolVersion, "server_time": nowISO(time.Now()),

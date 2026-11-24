@@ -560,7 +560,7 @@ func startEmbeddedHub() {
 		return
 	}
 	embeddedHub = instance
-	instance.SetTurnNotificationSink(deliverTurnNotification)
+
 	if err := instance.StartTSNet(); err != nil {
 		log.Printf("Hub 内嵌 tsnet 启动失败: %v", err)
 	}
@@ -1089,6 +1089,7 @@ func restartSelf() {
 
 func newUIProxy(target *url.URL) http.Handler {
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.FlushInterval = -1
 	// 不继承系统代理，否则 Hub 在 tailnet 时请求会被 Clash 等代理拦截。
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
@@ -1404,6 +1405,19 @@ func buildUIHandler(dist fs.FS, proxy http.Handler) http.Handler {
 			}
 			setDesktopJSONHeader(w)
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+			return
+		}
+		if r.URL.Path == "/desktop/notifications/test" {
+			if r.Method != "POST" || r.Header.Get("x-meerkat-request") != "1" {
+				http.Error(w, "invalid request", 403)
+				return
+			}
+			if err := sendTurnNotification(hub.TurnNotification{ID: time.Now().UnixNano(), Kind: "test", SessionTitle: "Meerkat 测试通知", Excerpt: "这台设备可以接收系统通知。"}); err != nil {
+				http.Error(w, err.Error(), 503)
+				return
+			}
+			setDesktopJSONHeader(w)
+			_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 			return
 		}
 		if r.URL.Path == "/desktop/notifications/permission" {

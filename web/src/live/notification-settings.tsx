@@ -14,6 +14,12 @@ import { cn } from "@/lib/utils";
 
 const DEFAULT_SETTINGS: TurnNotificationSettings = {
   enabled: true,
+  task_pool_enabled: true,
+  bot_events_enabled: true,
+  turn_events_enabled: true,
+  group_decisions_enabled: true,
+  approval_bypass: false,
+
   quiet_hours_enabled: true,
   quiet_start: "22:00",
   quiet_end: "08:00",
@@ -89,6 +95,15 @@ export function TurnNotificationsSection() {
     void save(next);
   };
 
+  const sendTest = async () => {
+    setError(""); setNotice("");
+    try {
+      const response = await fetch("/desktop/notifications/test", { method: "POST", headers: { "x-meerkat-request": "1" } });
+      if (!response.ok) throw new Error("发送测试通知失败，请检查系统通知权限");
+      setNotice("测试通知已发送");
+    } catch (error) { setError(error instanceof Error ? error.message : "发送失败"); }
+  };
+
   const requestPermission = async () => {
     setRequesting(true);
     try {
@@ -109,11 +124,11 @@ export function TurnNotificationsSection() {
             <BellRing className="size-4 text-muted-foreground" />
             <h2 className="text-sm font-semibold">桌面通知</h2>
             <Badge variant="secondary" className="text-[10px]">
-              DSH 回合结束
+              Hub 通知
             </Badge>
           </div>
           <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">
-            Hub 在后台轮询 DSH 的会话状态（只读，不参与审批），回合结束时弹系统通知。手机和浏览器端不会收到桌面通知。
+            选择哪些设备事件需要系统提醒。免打扰按接收设备的本地时间生效。
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -140,11 +155,11 @@ export function TurnNotificationsSection() {
         <div className="bg-card px-5 py-3">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <div className="text-xs font-medium">回合结束通知</div>
-              <div className="mt-0.5 text-[11px] text-muted-foreground">关闭后不再弹回合通知</div>
+              <div className="text-xs font-medium">通知总开关</div>
+              <div className="mt-0.5 text-[11px] text-muted-foreground">控制所有分类</div>
             </div>
             <Switch
-              data-testid="notification-enabled"
+              aria-label="通知总开关" disabled={loading || saving} data-testid="notification-enabled"
               checked={settings.enabled}
               onCheckedChange={(checked) => toggle({ enabled: checked })}
             />
@@ -157,7 +172,7 @@ export function TurnNotificationsSection() {
               <div className="mt-0.5 text-[11px] text-muted-foreground">时段内不弹系统通知</div>
             </div>
             <Switch
-              data-testid="notification-quiet-enabled"
+              aria-label="免打扰时段" disabled={loading || saving} data-testid="notification-quiet-enabled"
               checked={settings.quiet_hours_enabled}
               onCheckedChange={(checked) => toggle({ quiet_hours_enabled: checked })}
             />
@@ -187,6 +202,15 @@ export function TurnNotificationsSection() {
         </div>
       </div>
 
+      <div className="grid gap-px bg-border sm:grid-cols-2">
+        {([["task_pool_enabled","任务池状态"],["bot_events_enabled","智能体消息与审批"],["turn_events_enabled","DSH 回合状态"],["group_decisions_enabled","群内待决策提醒（语义识别）"],["approval_bypass","审批穿透免打扰"]] as const).map(([key,label]) => (
+          <div key={key} className="flex items-center justify-between gap-3 bg-card px-5 py-3 text-xs">
+            <label htmlFor={key}>{label}</label>
+            <Switch id={key} checked={settings[key]} disabled={loading || saving} onCheckedChange={value => toggle({[key]:value})} />
+          </div>
+        ))}
+      </div>
+      {supported && <Button variant="outline" className="m-3" disabled={permission !== "granted"} onClick={() => void sendTest()}>发送测试通知</Button>}
       {!supported ? (
         <div className="border-t bg-muted/30 px-5 py-3 text-[11px] text-muted-foreground">
           当前页面不在 Meerkat App 内运行，桌面通知不可用。
@@ -211,7 +235,7 @@ export function TurnNotificationsSection() {
       )}
 
       {notice ? (
-        <div className="flex items-center gap-1.5 border-t bg-emerald-50/50 px-5 py-2 text-[11px] text-emerald-700">
+        <div role="status" className="flex items-center gap-1.5 border-t bg-emerald-50/50 px-5 py-2 text-[11px] text-emerald-700">
           <Check className="size-3" />
           {notice}
         </div>

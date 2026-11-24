@@ -17,6 +17,9 @@ func (h *Hub) setHarnessURL(deviceID, rawURL string, now time.Time) error {
 		 ON CONFLICT(device_id) DO UPDATE SET url = excluded.url, updated_at = excluded.updated_at`,
 		deviceID, rawURL, nowISO(now),
 	)
+	if err == nil {
+		h.signalNotificationDevices()
+	}
 	return err
 }
 

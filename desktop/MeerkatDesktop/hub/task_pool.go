@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -309,7 +310,17 @@ func (h *Hub) reportPoolEvent(ctx context.Context, grant poolReportGrant, eventI
 		WHERE item_id=? AND assignment_rev=? AND status IN ('pending','sending','queued','uncertain','failed')`, item.ID, item.AssignmentRev); err != nil {
 		return poolItem{}, err
 	}
-	return item, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return poolItem{}, err
+	}
+	if kind == "blocked" || kind == "delivered" {
+		event := kind
+		if kind == "delivered" {
+			event = "review_ready"
+		}
+		h.notifyPool(event, item.ID, item.Title, item.ID+":"+strconv.Itoa(item.Revision))
+	}
+	return item, nil
 }
 
 // reviewPoolItem changes review state after the transport has verified the user.

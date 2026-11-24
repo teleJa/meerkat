@@ -51,7 +51,8 @@ func (h *Hub) registerHTTP(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/network/tsnet/start", h.auth(h.handleTSNetStart, true))
 	mux.HandleFunc("POST /api/network/tsnet/stop", h.auth(h.handleTSNetStop, true))
 	mux.HandleFunc("GET /api/events", h.authWithScope(h.handleEvents, MobileScopeDevices, false))
-	mux.HandleFunc("GET /api/notifications/settings", h.authAdmin(h.handleNotificationSettings, false))
+	mux.HandleFunc("GET /api/notifications/settings", h.authWithScope(h.handleNotificationSettings, MobileScopeDevices, false))
+	mux.HandleFunc("GET /api/notifications/stream", h.authWithScope(h.handleNotificationStream, MobileScopeDevices, false))
 	mux.HandleFunc("POST /api/notifications/settings", h.authAdmin(h.handleUpdateNotificationSettings, true))
 	mux.HandleFunc("GET /api/task-pool", h.authAdmin(h.handleListPool, false))
 	mux.HandleFunc("GET /api/task-pool/{id}", h.authAdmin(h.handlePoolDetail, false))
@@ -431,6 +432,7 @@ func (h *Hub) handleRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.revokeDevice(id, time.Now())
+	h.signalNotificationDevices()
 	h.connMu.Lock()
 	client := h.connections[id]
 	delete(h.connections, id)
