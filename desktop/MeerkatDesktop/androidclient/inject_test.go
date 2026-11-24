@@ -33,9 +33,12 @@ func TestInjectDSHMobileHTML(t *testing.T) {
 	if strings.Contains(text, ".bt-leftcol{top:44px") {
 		t.Fatal("manual .bt-leftcol top override should be gone")
 	}
-	// 侧边栏收起后 #root 不应再让出 72px：margin 必须以 :has(.bt-leftcol) 为条件。
-	if !strings.Contains(text, "html:has(.bt-leftcol) #root{margin-left:72px") {
-		t.Fatal("root offset must be conditional on the sidebar being rendered")
+	// 窄屏抽屉覆盖正文，开合时都不应给正文留出侧栏宽度。
+	if strings.Contains(text, "margin-left:72px") {
+		t.Fatal("mobile drawer must not reserve the old 72px sidebar offset")
+	}
+	if !strings.Contains(text, "@media (max-width:720px){\n  "+`html body #root [class*="_centerCol"]{margin-left:0!important`) {
+		t.Fatal("narrow-screen content must have zero left margin")
 	}
 	if strings.Contains(text, "@media (max-width:720px){\n  #root{margin-left:72px") {
 		t.Fatal("unconditional root margin would keep the content narrow when the sidebar is hidden")
