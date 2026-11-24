@@ -18,12 +18,7 @@ import (
 //
 //  2. #root 预留 44px 给浮动顶栏，避免会话内容钻到顶栏下面。
 //
-//  3. 窄屏时把 88px 的 rail 收成 72px，并且**只在侧边栏真的渲染出来时**
-//     才给 #root 让宽度。ds-bot 在 shown === "hidden" 时根本不会创建
-//     .bt-leftcol（client.js: `shown === "hidden" ? null : createElement(LeftColumn)`），
-//     所以 `html:has(.bt-leftcol)` 就是"侧边栏当前可见"的准确判据。
-//     之前这条 margin 是无条件的：用户收起侧边栏后 DSH 已经不占位，我们的
-//     CSS 还硬推 72px，右侧空一条、内容依旧窄。
+//  3. 窄屏侧栏覆盖正文。正文列必须覆盖 ds-bot 在运行时追加的 88px 外边距。
 //
 //  4. 隐藏外壳（第三方 sidebar 组件）自带的侧边栏按钮。
 //     ds-bot 自己有一条 `html[data-windows-titlebar] [class*="_logoRow"]>[class*="_toggle"]
@@ -76,13 +71,54 @@ const dshMobileCSS = `
 #root{padding-top:44px!important;box-sizing:border-box!important}
 [data-shell-leading] button,[data-slot="shell.leading"] button{display:none!important}
 @media (max-width:720px){
-  html:has(.bt-leftcol) #root{margin-left:72px!important;width:calc(100% - 72px)!important}
-  .bt-leftcol{width:72px!important}
+  html body #root [class*="_centerCol"]{margin-left:0!important;width:100%!important;max-width:100%!important;box-sizing:border-box}
+  .bt-rail-top .bt-round,.bt-rail .bt-row,.bt-rail-folder,
+  .bt-leftcol-foot-rail>:is(.bt-round,.bt-account),.bt-leftcol-foot-rail .bt-you{width:44px!important;height:44px!important;min-height:44px!important}
+  .bt-rail .bt-agent-ava{width:36px!important;height:36px!important}
+  .bt-round.bt-title-toggle{width:38px;height:38px;background:var(--bt-glass-bg);backdrop-filter:blur(12px)}
+  header[class*="_header"] .bt-head{padding:0 56px!important;box-sizing:border-box}
+  header[class*="_header"] .bt-pill{max-width:100%!important}
+  .bt-leftcol-foot-rail{padding-bottom:env(safe-area-inset-bottom,0px)}
+  body:has(>.bt-leftcol:not([data-leaving]))>#meerkat-sidebar-mask{display:block;position:fixed;inset:var(--dsh-frame-top-clearance) 0 0;z-index:24;border:0;padding:0;background:rgba(15,23,42,.28)}
 }
 @media (hover:none){
   .bt-msg,.bt-msg-line>.bt-bubble,.bt-bubble{max-width:100%!important}
 }
 `
+
+// Run before the deferred DSH client reads its initial sidebar preference.
+const mobileSidebar = `<script id="meerkat-mobile-sidebar">(() => {
+  const narrow = matchMedia('(max-width:720px)');
+  if (narrow.matches) {
+    try {
+      const marker = 'meerkat:mobile-sidebar-initialized';
+      if (!sessionStorage.getItem(marker)) {
+        const key = 'ds-bot:sidebar';
+        let saved;
+        try { saved = JSON.parse(localStorage.getItem(key)); } catch {}
+        localStorage.setItem(key, JSON.stringify({ ...saved, pref: 'hidden',
+          shown: 'rail',
+          width: Number.isFinite(saved?.width) ? saved.width : 280 }));
+        sessionStorage.setItem(marker, '1');
+      }
+    } catch {} // Storage may be unavailable in an embedded document.
+  }
+  document.addEventListener('DOMContentLoaded', () => {
+    const mask = document.createElement('button');
+    mask.id = 'meerkat-sidebar-mask';
+    mask.type = 'button';
+    mask.hidden = true; // The narrow-screen rule shows it only beside an active sidebar.
+    mask.setAttribute('aria-label', '收起侧栏');
+    document.body.append(mask);
+    const collapse = () => document.querySelector('body > .bt-leftcol:not([data-leaving]) .bt-side-collapse')?.click();
+    mask.addEventListener('click', collapse);
+    document.addEventListener('click', event => {
+      if (narrow.matches && event.target.closest?.('.bt-leftcol .bt-row, .bt-leftcol .bt-agent')) {
+        setTimeout(collapse, 0); // Let ds-bot select the conversation first.
+      }
+    }, true);
+  }, { once: true });
+})();</script>`
 
 var dshReleasePattern = regexp.MustCompile(`"release":\{"version":"([^"]+)","commit":"([^"]+)"\}`)
 
@@ -133,6 +169,7 @@ func InjectDSHMobileHTML(body []byte) DSHInjection {
 	var injected []byte
 	if !hasStyle {
 		injected = append(injected, []byte(`<style id="meerkat-mobile">`+dshMobileCSS+`</style>`)...)
+		injected = append(injected, []byte(mobileSidebar)...)
 	}
 	if !hasShim {
 		injected = append(injected, []byte(DSHResumeShim)...)
