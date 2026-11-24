@@ -1592,7 +1592,7 @@ func main() {
 		services = append(services, application.NewService(notificationService))
 	}
 	app := application.New(application.Options{
-		Name:        "Meerkat",
+		Name:        desktopApplicationName(),
 		Description: "Meerkat desktop control plane",
 		Services:    services,
 		Assets: application.AssetOptions{

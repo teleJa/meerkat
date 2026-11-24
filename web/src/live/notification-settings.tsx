@@ -47,6 +47,7 @@ export function TurnNotificationsSection() {
   const [permission, setPermission] = useState<NotificationPermissionStatus>("unavailable");
   const [supported, setSupported] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [hubAvailable, setHubAvailable] = useState(false);
   const [saving, setSaving] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [notice, setNotice] = useState("");
@@ -54,19 +55,18 @@ export function TurnNotificationsSection() {
 
   const load = useCallback(async () => {
     setError("");
-    try {
-      const [nextSettings, permissionState] = await Promise.all([
-        liveApi.notificationSettings(),
-        desktopNotificationPermission(),
-      ]);
-      setSettings(nextSettings);
-      setPermission(permissionState.status);
-      setSupported(permissionState.supported);
-    } catch (loadError) {
+    const local = desktopNotificationPermission().then(({ status, supported }) => {
+      setPermission(status);
+      setSupported(supported);
+    });
+    const hub = liveApi.notificationSettings().then(next => {
+      setSettings(next);
+      setHubAvailable(true);
+    }).catch(loadError => {
+      setHubAvailable(false);
       setError(loadError instanceof Error ? loadError.message : "读取通知设置失败");
-    } finally {
-      setLoading(false);
-    }
+    }).finally(() => setLoading(false));
+    await Promise.all([local, hub]);
   }, []);
 
   useEffect(() => {
@@ -159,7 +159,7 @@ export function TurnNotificationsSection() {
               <div className="mt-0.5 text-[11px] text-muted-foreground">控制所有分类</div>
             </div>
             <Switch
-              aria-label="通知总开关" disabled={loading || saving} data-testid="notification-enabled"
+              aria-label="通知总开关" disabled={!hubAvailable || loading || saving} data-testid="notification-enabled"
               checked={settings.enabled}
               onCheckedChange={(checked) => toggle({ enabled: checked })}
             />
@@ -172,7 +172,7 @@ export function TurnNotificationsSection() {
               <div className="mt-0.5 text-[11px] text-muted-foreground">时段内不弹系统通知</div>
             </div>
             <Switch
-              aria-label="免打扰时段" disabled={loading || saving} data-testid="notification-quiet-enabled"
+              aria-label="免打扰时段" disabled={!hubAvailable || loading || saving} data-testid="notification-quiet-enabled"
               checked={settings.quiet_hours_enabled}
               onCheckedChange={(checked) => toggle({ quiet_hours_enabled: checked })}
             />
@@ -182,7 +182,7 @@ export function TurnNotificationsSection() {
               data-testid="notification-quiet-start"
               type="time"
               value={settings.quiet_start}
-              disabled={!settings.quiet_hours_enabled}
+              disabled={!hubAvailable || saving || !settings.quiet_hours_enabled}
               onChange={(event) => setSettings((current) => ({ ...current, quiet_start: event.target.value }))}
               onBlur={() => void save(settings)}
               className="h-7 rounded-md border bg-background px-2 font-mono text-[11px] disabled:opacity-50"
@@ -192,7 +192,7 @@ export function TurnNotificationsSection() {
               data-testid="notification-quiet-end"
               type="time"
               value={settings.quiet_end}
-              disabled={!settings.quiet_hours_enabled}
+              disabled={!hubAvailable || saving || !settings.quiet_hours_enabled}
               onChange={(event) => setSettings((current) => ({ ...current, quiet_end: event.target.value }))}
               onBlur={() => void save(settings)}
               className="h-7 rounded-md border bg-background px-2 font-mono text-[11px] disabled:opacity-50"
@@ -206,7 +206,7 @@ export function TurnNotificationsSection() {
         {([["task_pool_enabled","任务池状态"],["bot_events_enabled","智能体消息与审批"],["turn_events_enabled","DSH 回合状态"],["group_decisions_enabled","群内待决策提醒（语义识别）"],["approval_bypass","审批穿透免打扰"]] as const).map(([key,label]) => (
           <div key={key} className="flex items-center justify-between gap-3 bg-card px-5 py-3 text-xs">
             <label htmlFor={key}>{label}</label>
-            <Switch id={key} checked={settings[key]} disabled={loading || saving} onCheckedChange={value => toggle({[key]:value})} />
+            <Switch id={key} checked={settings[key]} disabled={!hubAvailable || loading || saving} onCheckedChange={value => toggle({[key]:value})} />
           </div>
         ))}
       </div>

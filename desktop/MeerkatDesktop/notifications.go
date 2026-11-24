@@ -53,16 +53,7 @@ func setupNotificationService() {
 			log.Printf("桌面通知回调失败: %v", result.Error)
 			return
 		}
-		record, ok := takeTurnNotification(result.Response.ID)
-		if !ok {
-			log.Printf("收到未知通知点击: %q", result.Response.ID)
-			if mainWindow != nil {
-				mainWindow.Show()
-				mainWindow.Focus()
-			}
-			return
-		}
-		openTurnNotification(record)
+		openTurnNotification(clickedNotification(result.Response))
 	})
 }
 
@@ -90,6 +81,7 @@ func sendTurnNotification(record hub.TurnNotification) error {
 		Title: notificationTitle(record),
 		Body:  notificationBody(record),
 		Data: map[string]any{
+			"item_id":      record.ItemID,
 			"device_id":    record.DeviceID,
 			"session_id":   record.SessionID,
 			"session":      record.SessionTitle,
@@ -174,6 +166,18 @@ func takeTurnNotification(id string) (hub.TurnNotification, bool) {
 		delete(notificationSentByID, id)
 	}
 	return record, ok
+}
+
+// The original payload survives process restarts, while stream IDs and the
+// in-memory cache belong to the current run. Older pool toasts lack item_id.
+func clickedNotification(response notifications.NotificationResponse) hub.TurnNotification {
+	cached, _ := takeTurnNotification(response.ID)
+	item, hasItem := response.UserInfo["item_id"].(string)
+	device, _ := response.UserInfo["device_id"].(string)
+	if hasItem || (cached.ItemID == "" && device != "") {
+		return hub.TurnNotification{ItemID: item, DeviceID: device}
+	}
+	return cached
 }
 
 // openTurnNotification 把窗口带到前台并跳到对应设备的 DSH 页。
