@@ -61,6 +61,7 @@ func startupFallback(e ast.Expression) *ast.ArrayLiteral {
 }
 
 type trustExpression struct {
+	outer       *ast.ArrayLiteral
 	owned       *ast.ArrayLiteral
 	baseSection string
 	additions   bool
@@ -94,7 +95,7 @@ func parseTrustExpression(source string) *trustExpression {
 	}
 	// Include grouping and comments around the user's operand. This comparison
 	// only decides whether a fully released row can inherit its underlying field.
-	return &trustExpression{owned: owned, baseSection: source[int(startup.RightBracket) : int(owned.LeftBracket)-1], additions: len(args.Value) > 3 || len(outer.Value) > 1}
+	return &trustExpression{outer: outer, owned: owned, baseSection: source[int(startup.RightBracket) : int(owned.LeftBracket)-1], additions: len(args.Value) > 3 || len(outer.Value) > 1}
 }
 
 // trustBlock embeds the effective expression verbatim as the second spread.
@@ -115,6 +116,64 @@ func inheritedTrustExpressions(saved string) map[string]bool {
 		saved = base
 	}
 	return inherited
+}
+
+// sameStaticTrust compares the small expression language emitted by trustBlock.
+// Opaque operands are never evaluated. In particular, order, holes, spreads
+// and nesting are significant even when the resulting host sets might agree.
+func sameStaticTrust(a, b ast.Expression) bool {
+	switch x := a.(type) {
+	case nil:
+		return b == nil
+	case *ast.StringLiteral:
+		y, ok := b.(*ast.StringLiteral)
+		return ok && x.Value == y.Value
+	case *ast.ArrayLiteral:
+		y, ok := b.(*ast.ArrayLiteral)
+		if !ok || len(x.Value) != len(y.Value) {
+			return false
+		}
+		for i, item := range x.Value {
+			if !sameStaticTrust(item, y.Value[i]) {
+				return false
+			}
+		}
+		return true
+	case *ast.SpreadElement:
+		y, ok := b.(*ast.SpreadElement)
+		return ok && sameStaticTrust(x.Expression, y.Expression)
+	case *ast.NewExpression:
+		y, ok := b.(*ast.NewExpression)
+		return ok && named(x.Callee, "Set") && named(y.Callee, "Set") && len(x.ArgumentList) == 1 && len(y.ArgumentList) == 1 && sameStaticTrust(x.ArgumentList[0], y.ArgumentList[0])
+	default:
+		return startupFallback(a) != nil && startupFallback(b) != nil
+	}
+}
+
+func recordedTrustExpression(history map[string]bool, source string) bool {
+	if history[source] {
+		return true
+	}
+	current := parseTrustExpression(source)
+	if current == nil {
+		return false
+	}
+	for prior := range history {
+		saved := parseTrustExpression(prior)
+		if saved == nil {
+			continue
+		}
+		if sameStaticTrust(saved.outer, current.outer) {
+			return true
+		}
+		// Preserve opaque base and extension operands byte for byte while
+		// allowing a purely presentational edit inside the host array.
+		if prior[:int(saved.owned.LeftBracket)] == source[:int(current.owned.LeftBracket)] &&
+			prior[int(saved.owned.RightBracket)-1:] == source[int(current.owned.RightBracket)-1:] && sameStaticTrust(saved.owned, current.owned) {
+			return true
+		}
+	}
+	return false
 }
 
 // goja excludes grouping parentheses and comments from literal spans. Walk

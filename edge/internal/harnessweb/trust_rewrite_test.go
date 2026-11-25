@@ -313,6 +313,47 @@ func TestTrustMoveAfterManualAppendAndCRLF(t *testing.T) {
 	}
 }
 
+func TestReleaseHistoricalSharedHost(t *testing.T) {
+	const shared = "shared.test:80"
+	owners := []string{shared, "exclusive.test:80"}
+	for _, base := range []string{"", "- id: connection\n  config:\n    trustedHosts: !!js lookupHosts()\n"} {
+		historical, err := trustBlock([]byte(base), []string{shared})
+		if err != nil {
+			t.Fatal(err)
+		}
+		block, err := trustBlock([]byte(historical), owners)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, literal := range []string{`'shared.test:80'`, `"\u0073hared.test:80"`, ` /* retained */ ( 'shared.test:80' ) `} {
+			var doc yaml.Node
+			if err := yaml.Unmarshal([]byte(historical), &doc); err != nil {
+				t.Fatal(err)
+			}
+			hosts := field(field(doc.Content[0].Content[0], "config"), "trustedHosts")
+			hosts.Value = strings.Replace(hosts.Value, `"shared.test:80"`, literal, 1)
+			manual, err := yaml.Marshal(&doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, input := range []string{string(manual) + block, block + string(manual)} {
+				got, err := removeSerializedTrust([]byte(strings.ReplaceAll(input, "\n", "\r\n")), block, owners)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var result yaml.Node
+				if err := yaml.Unmarshal(got, &result); err != nil {
+					t.Fatal(err)
+				}
+				rows := result.Content[0].Content
+				if len(rows) != 1 || field(field(rows[0], "config"), "trustedHosts").Value != hosts.Value {
+					t.Fatalf("wrong released profile: %s", got)
+				}
+			}
+		}
+	}
+}
+
 func TestTrustCandidateOrder(t *testing.T) {
 	block, err := trustBlock(nil, []string{"device.test:80"})
 	if err != nil {

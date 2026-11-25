@@ -286,7 +286,7 @@ func removeSerializedTrust(current []byte, block string, owners []string) ([]byt
 		currentHosts := field(cfg, "trustedHosts")
 		underlying := previous
 		previous = cfg
-		if currentHosts == nil || history[currentHosts.Value] && currentHosts.Tag == savedHosts.Tag {
+		if currentHosts == nil || currentHosts.Tag == savedHosts.Tag && recordedTrustExpression(history, currentHosts.Value) {
 			continue
 		}
 		releasedExpr, matched, err := releaseAppendedHosts(savedHosts, currentHosts, owners)
