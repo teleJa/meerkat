@@ -280,6 +280,21 @@ func removeSerializedTrust(current []byte, block string, owners []string) ([]byt
 	marker := field(managed, trustRowID)
 	var history map[string]bool
 	if marker == nil {
+		// Older ledgers stored the whole row without an identity field. An
+		// unchanged row identifies itself even when edits to another row
+		// make it look like a possible owner of the same hosts.
+		for i, row := range root.Content {
+			if sameTrustNode(managed, row) {
+				if index >= 0 {
+					return nil, errors.New("受管地址归属不唯一")
+				}
+				index = i
+			}
+		}
+		if index >= 0 {
+			root.Content = append(root.Content[:index], root.Content[index+1:]...)
+			return yaml.Marshal(root)
+		}
 		history = inheritedTrustExpressions(savedHosts.Value)
 	} else {
 		matches := 0

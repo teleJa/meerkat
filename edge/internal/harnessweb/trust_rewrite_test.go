@@ -385,7 +385,10 @@ func TestLegacyTrustCandidateOrder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, input := range []string{string(other) + block, block + string(other)} {
+		// Edit an independent field on the managed row to exercise the
+		// semantic fallback when the complete ledger row no longer exists.
+		edited := strings.Replace(block, "id: connection", "id: connection\n  independent: true", 1)
+		for _, input := range []string{string(other) + edited, edited + string(other)} {
 			got, err := removeSerializedTrust([]byte(input), block, []string{"device.test:80"})
 			if dynamic {
 				if err != errTrustOwnership || got != nil {
