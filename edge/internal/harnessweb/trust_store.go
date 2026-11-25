@@ -264,13 +264,14 @@ func UpdateTrust(home, stateDir string, owner *TrustOwner, profile, rawURL strin
 		base := cur
 		if block := ledger.Blocks[p]; block != "" {
 			original, restored := ledger.Original[p]
+			base, err = removeSerializedTrust(cur, block, oldHosts[p])
+			if err != nil {
+				return fmt.Errorf("profile %s: %w", p, err)
+			}
+			// Restore the original bytes only after checking the whole document
+			// for duplicate row identities, including reformatted copies.
 			if bytes.HasSuffix(cur, []byte(block)) && bytes.Count(cur, []byte(block)) == 1 && (!restored || string(cur) == block) {
 				base = bytes.Replace(cur, []byte(block), original, 1)
-			} else {
-				base, err = removeSerializedTrust(cur, block, oldHosts[p])
-				if err != nil {
-					return fmt.Errorf("profile %s: %w", p, err)
-				}
 			}
 
 			delete(ledger.Original, p)

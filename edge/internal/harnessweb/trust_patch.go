@@ -2,6 +2,7 @@ package harnessweb
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+const trustRowID = "x-meerkat-trust-id"
 
 var dnsLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 var numericLabel = regexp.MustCompile(`^(?:[0-9]+|0x[0-9a-f]*)$`)
@@ -169,7 +172,7 @@ func trustBlock(base []byte, hosts []string) (string, error) {
 	}
 	managed, _ := json.Marshal(hosts)
 	*original = yaml.Node{Kind: yaml.ScalarNode, Tag: "tag:yaml.org,2002:js", Style: yaml.DoubleQuotedStyle | yaml.TaggedStyle, Value: fmt.Sprintf("[...new Set([...(ctx.get('webStartup')?.trustedHosts ?? []), ...(%s), ...%s])]", expr, managed)}
-	row := map[string]any{"id": "connection", "config": cfg}
+	row := map[string]any{"id": "connection", "config": cfg, trustRowID: rand.Text()}
 	data, err := yaml.Marshal([]any{row})
 	if err != nil {
 		return "", err
@@ -274,7 +277,24 @@ func removeSerializedTrust(current []byte, block string, owners []string) ([]byt
 	index := -1
 	var previous, inherited *yaml.Node
 	savedHosts := field(config, "trustedHosts")
-	history := inheritedTrustExpressions(savedHosts.Value)
+	marker := field(managed, trustRowID)
+	var history map[string]bool
+	if marker == nil {
+		history = inheritedTrustExpressions(savedHosts.Value)
+	} else {
+		matches := 0
+		for _, row := range root.Content {
+			if sameTrustNode(marker, field(row, trustRowID)) {
+				matches++
+			}
+		}
+		if matches > 1 {
+			return nil, errors.New("受管地址归属不唯一：受管行标识重复")
+		}
+		if matches == 0 {
+			return nil, errors.New("找不到账本中的受管行标识")
+		}
+	}
 	var replacement string
 	var scanErr error
 	for i, row := range root.Content {
@@ -286,7 +306,10 @@ func removeSerializedTrust(current []byte, block string, owners []string) ([]byt
 		currentHosts := field(cfg, "trustedHosts")
 		underlying := previous
 		previous = cfg
-		if currentHosts == nil || currentHosts.Tag == savedHosts.Tag && recordedTrustExpression(history, currentHosts.Value) {
+		if marker != nil && !sameTrustNode(marker, field(row, trustRowID)) {
+			continue
+		}
+		if currentHosts == nil || marker == nil && currentHosts.Tag == savedHosts.Tag && recordedTrustExpression(history, currentHosts.Value) {
 			continue
 		}
 		releasedExpr, matched, err := releaseAppendedHosts(savedHosts, currentHosts, owners)
@@ -320,6 +343,14 @@ func removeSerializedTrust(current []byte, block string, owners []string) ([]byt
 			released = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 		}
 		*cfg = *released
+		if marker != nil {
+			for i := 0; i < len(row.Content); i += 2 {
+				if row.Content[i].Value == trustRowID {
+					row.Content = append(row.Content[:i], row.Content[i+2:]...)
+					break
+				}
+			}
+		}
 	}
 	return yaml.Marshal(root)
 }

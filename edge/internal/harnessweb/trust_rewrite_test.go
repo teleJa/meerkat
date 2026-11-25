@@ -76,10 +76,19 @@ fs.writeFileSync(path, String(doc));
     trustedHosts: !!js "[...new Set([...(ctx.get('webStartup')?.trustedHosts ?? []),
       ...([]), ...[\"edge.test:51858\"]])]"
   id: connection
+  x-meerkat-trust-id: MARKER
 - id: fixture-local-plugin
   disabled: true
 `
-		if err := os.WriteFile(patch, []byte(serialized), 0600); err != nil {
+		var rows []map[string]any
+		data, err := os.ReadFile(patch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := yaml.Unmarshal(data, &rows); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(patch, []byte(strings.Replace(serialized, "MARKER", rows[0][trustRowID].(string), 1)), 0600); err != nil {
 			t.Fatal(err)
 		}
 	} else {
@@ -325,7 +334,7 @@ func TestReleaseHistoricalSharedHost(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, literal := range []string{`'shared.test:80'`, `"\u0073hared.test:80"`, ` /* retained */ ( 'shared.test:80' ) `} {
+		for _, literal := range []string{`'shared.test:80'`, `"\u0073hared.test:80"`, ` /* retained */ ( 'shared.test:80' ) `, `'shared.test:80', 'added.test:80'`, `'added.test:80', 'shared.test:80'`, `'added.test:80'`} {
 			var doc yaml.Node
 			if err := yaml.Unmarshal([]byte(historical), &doc); err != nil {
 				t.Fatal(err)
@@ -354,11 +363,12 @@ func TestReleaseHistoricalSharedHost(t *testing.T) {
 	}
 }
 
-func TestTrustCandidateOrder(t *testing.T) {
+func TestLegacyTrustCandidateOrder(t *testing.T) {
 	block, err := trustBlock(nil, []string{"device.test:80"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	block = withoutTestMarker(block)
 	for _, dynamic := range []bool{false, true} {
 		var doc yaml.Node
 		if err := yaml.Unmarshal([]byte(block), &doc); err != nil {
@@ -551,4 +561,152 @@ console.log(JSON.stringify(load('@deepseek-ai/cordis-plugin-loader').evaluate(ct
 		t.Fatal("new lease retained")
 	}
 	check(manual...)
+}
+
+func withoutTestMarker(block string) string {
+	var out []string
+	for _, line := range strings.Split(block, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), trustRowID+":") {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+func TestTrustLegacyPromotionAndMarkerConflict(t *testing.T) {
+	home, state := t.TempDir(), t.TempDir()
+	profile := filepath.Join(home, "profiles", "lab")
+	if err := os.MkdirAll(profile, 0700); err != nil {
+		t.Fatal(err)
+	}
+	patch := filepath.Join(profile, "cordis.patch.yml")
+	ledgerPath := filepath.Join(home, "runtime", "meerkat-trusted-hosts.json")
+	read := func(path string) []byte {
+		t.Helper()
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	write := func(path string, data []byte) {
+		t.Helper()
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	owner := NewTrustOwner("fixture", "dummy")
+	if err := UpdateTrust(home, state, &owner, "lab", "http://old.test"); err != nil {
+		t.Fatal(err)
+	}
+	var ledger trustLedger
+	if err := json.Unmarshal(read(ledgerPath), &ledger); err != nil {
+		t.Fatal(err)
+	}
+	legacy := withoutTestMarker(ledger.Blocks["lab"])
+	ledger.Blocks["lab"] = legacy
+	data, err := json.Marshal(ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(ledgerPath, data)
+	write(patch, []byte(strings.ReplaceAll(legacy, "\n", "\r\n")))
+	if err := UpdateTrust(home, state, &owner, "lab", "http://new.test"); err != nil {
+		t.Fatal(err)
+	}
+	promoted := string(read(patch))
+	before := read(ledgerPath)
+	if strings.Contains(promoted, "old.test") || !strings.Contains(promoted, trustRowID) || !bytes.Contains(before, []byte(trustRowID)) {
+		t.Fatal("legacy ledger did not promote")
+	}
+	for _, modified := range []string{withoutTestMarker(promoted), strings.Replace(promoted, "new.test", "changed.test", 1) + promoted} {
+		write(patch, []byte(modified))
+		if err := UpdateTrust(home, state, &owner, "", ""); err == nil || string(read(patch)) != modified || !bytes.Equal(before, read(ledgerPath)) {
+			t.Fatal("missing or duplicate identity must leave profile and ledger intact")
+		}
+	}
+	write(patch, []byte(promoted))
+	if err := UpdateTrust(home, state, &owner, "", ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHistoricalEditsAcrossTrustMoves(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("Node unavailable for expression evaluation")
+	}
+	home, state := t.TempDir(), t.TempDir()
+	profile := filepath.Join(home, "profiles", "lab")
+	if err := os.MkdirAll(profile, 0700); err != nil {
+		t.Fatal(err)
+	}
+	patch := filepath.Join(profile, "cordis.patch.yml")
+	owner := NewTrustOwner("device", "fixture")
+	update := func(host string) {
+		t.Helper()
+		p, url := "", ""
+		if host != "" {
+			p, url = "lab", "http://"+host
+		}
+		if err := UpdateTrust(home, state, &owner, p, url); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := func() *yaml.Node {
+		t.Helper()
+		data, err := os.ReadFile(patch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc yaml.Node
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		return doc.Content[0]
+	}
+	editHistory := func(from, to string) {
+		t.Helper()
+		root := rows()
+		expr := field(field(root.Content[0], "config"), "trustedHosts")
+		next := strings.Replace(expr.Value, from, to, 1)
+		if next == expr.Value {
+			t.Fatal("missing history operand")
+		}
+		expr.Value = next
+		data, err := yaml.Marshal(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(patch, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(want ...string) {
+		t.Helper()
+		root := rows()
+		expr := field(field(root.Content[len(root.Content)-1], "config"), "trustedHosts")
+		out, err := exec.Command("node", "-e", "const ctx={get:()=>null};console.log(JSON.stringify("+expr.Value+"))").CombinedOutput()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("effective hosts %v, want %v", got, want)
+		}
+	}
+	update("old.test")
+	editHistory(`"old.test:80"`, `"old.test:80","shared.test:80"`)
+	update("shared.test")
+	editHistory(`"shared.test:80"`, `"a.test:80","shared.test:80","b.test:80"`)
+	update("second.test")
+	check("a.test:80", "shared.test:80", "b.test:80", "second.test:80")
+	editHistory(`"a.test:80","shared.test:80","b.test:80"`, `"b.test:80","shared.test:80"`)
+	update("third.test")
+	check("b.test:80", "shared.test:80", "third.test:80")
+	editHistory(`"b.test:80","shared.test:80"`, `"shared.test:80","b.test:80"`)
+	update("")
+	check("shared.test:80", "b.test:80")
 }
