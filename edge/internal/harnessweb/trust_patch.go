@@ -280,7 +280,10 @@ func removeSerializedTrust(current []byte, block string, owners []string) ([]byt
 			continue
 		}
 		savedHosts, currentHosts := field(config, "trustedHosts"), field(cfg, "trustedHosts")
-		releasedExpr, appended := releaseAppendedHosts(savedHosts, currentHosts, owners)
+		releasedExpr, appended, err := releaseAppendedHosts(savedHosts, currentHosts, owners)
+		if err != nil {
+			return nil, err
+		}
 		if sameTrustNode(savedHosts, currentHosts) || appended {
 			if appended && currentHosts.Value != savedHosts.Value {
 				currentHosts.Value = releasedExpr

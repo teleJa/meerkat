@@ -180,9 +180,10 @@ func TestTrustRewriteKeepsIndependentEdits(t *testing.T) {
 
 func TestTrustExpressionAppendLifecycle(t *testing.T) {
 	for name, formatted := range map[string]string{
-		"compact":   `"old.test:80","shared.test:80"`,
-		"space":     `"old.test:80", "shared.test:80"`,
-		"multiline": "\"old.test:80\", \n  'shared.test:80'",
+		"compact":                   `"old.test:80","shared.test:80"`,
+		"reordered and interleaved": `'shared.test:80', ("shared.test:80"), /* comma , */ "old.test:80"`,
+		"space":                     `"old.test:80", "shared.test:80"`,
+		"multiline":                 "\"old.test:80\", \n  'shared.test:80'",
 	} {
 		t.Run(name, func(t *testing.T) { testTrustExpressionAppendLifecycle(t, formatted) })
 	}
@@ -201,17 +202,85 @@ func TestReleaseEditedTrustExpression(t *testing.T) {
 		{"quote only", quoted, original, true},
 		{"independent base", edited, strings.Replace(edited, `...["device"]`, `...[]`, 1), true},
 		{"manual grouped duplicate", strings.Replace(edited, `...["device"]`, `...[("device") /* , */, ("device")]`, 1), strings.Replace(edited, `...["device"]`, `...[ ("device")]`, 1), true},
-		{"owned prefix moved", strings.Replace(edited, `...["device"]`, `...["manual", "device"]`, 1), "", false},
+		{"owned prefix moved", strings.Replace(edited, `...["device"]`, `...["manual", "device"]`, 1), strings.Replace(edited, `...["device"]`, `...["manual",]`, 1), true},
+		{"already deleted", strings.Replace(original, `...["device"]`, `...["manual"]`, 1), strings.Replace(original, `...["device"]`, `...["manual"]`, 1), true},
 		{"different constructor", strings.Replace(edited, "new Set", "new Other", 1), "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			current := *saved
 			current.Value = tc.source
-			got, ok := releaseAppendedHosts(saved, &current, []string{"device"})
-			if ok != tc.ok || got != tc.want {
+			got, ok, err := releaseAppendedHosts(saved, &current, []string{"device"})
+			if ok && err != nil || ok != tc.ok || got != tc.want {
 				t.Fatalf("got (%q,%v), want (%q,%v)", got, ok, tc.want, tc.ok)
 			}
 		})
+	}
+}
+
+func TestReleaseTrustArrayCounts(t *testing.T) {
+	const template = `[...new Set([...(ctx.get('webStartup')?.trustedHosts ?? []), ...([]), ...[%s]])]`
+	wrap := func(elements string) string { return strings.Replace(template, "%s", elements, 1) }
+	saved := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!js", Value: wrap(`"a","a","b"`)}
+	for _, tc := range []struct {
+		name, elements, want string
+		ok                   bool
+	}{
+		{"counts and escapes", `"before",("b"),"middle",'\x61',"a","tail",'a'`, `"before","middle","tail",'a'`, true},
+		{"missing references", `"manual","a"`, `"manual",`, true},
+		{"sparse array", `,,"a",,`, `,,,`, true},
+		{"unresolved replacement", `lookupHost(),"b"`, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := *saved
+			current.Value = wrap(tc.elements)
+			got, ok, err := releaseAppendedHosts(saved, &current, []string{"a", "a", "b"})
+			if (err == nil) != tc.ok || ok != tc.ok || ok && got != wrap(tc.want) {
+				t.Fatalf("released %q, ok=%v", got, ok)
+			}
+		})
+	}
+}
+
+func TestTrustReleaseAfterManualRemoval(t *testing.T) {
+	block, err := trustBlock(nil, []string{"device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]yaml.Node
+	if err := yaml.Unmarshal([]byte(block), &rows); err != nil {
+		t.Fatal(err)
+	}
+	cfg := rows[0]["config"]
+	expr := field(&cfg, "trustedHosts")
+	expr.Value = strings.Replace(expr.Value, `...["device"]`, `...[]`, 1)
+	current, err := yaml.Marshal(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := removeSerializedTrust(current, block, []string{"device"})
+	if err != nil || strings.TrimSpace(string(base)) != "[]" {
+		t.Fatalf("expected released row, got %s, %v", base, err)
+	}
+}
+
+func TestAmbiguousReorderedTrustRows(t *testing.T) {
+	block, err := trustBlock(nil, []string{"device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]yaml.Node
+	if err := yaml.Unmarshal([]byte(block), &rows); err != nil {
+		t.Fatal(err)
+	}
+	config := rows[0]["config"]
+	expr := field(&config, "trustedHosts")
+	expr.Value = strings.Replace(expr.Value, `...["device"]`, `...["manual","device"]`, 1)
+	data, err := yaml.Marshal(append(rows, rows[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := removeSerializedTrust(data, block, []string{"device"}); err == nil || !strings.Contains(err.Error(), "归属不唯一") {
+		t.Fatalf("ambiguous release: %v", err)
 	}
 }
 

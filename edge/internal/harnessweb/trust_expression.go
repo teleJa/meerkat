@@ -1,7 +1,9 @@
 package harnessweb
 
 import (
+	"errors"
 	"regexp"
+	"strings"
 
 	"github.com/dop251/goja/ast"
 	"github.com/dop251/goja/parser"
@@ -95,38 +97,92 @@ func parseTrustExpression(source string) *trustExpression {
 	return &trustExpression{owned: owned, baseSection: source[int(startup.RightBracket) : int(owned.LeftBracket)-1], additions: len(args.Value) > 3 || len(outer.Value) > 1}
 }
 
-// The parser omits grouping parentheses and trivia from string literal spans.
-// After the last owned literal, consume that trivia up to its array separator.
-var elementSeparator = regexp.MustCompile(`^(?:[\s\p{Zs}\x{FEFF}\x{2028}\x{2029})]|/\*(?s:.*?)\*/|//[^\r\n\x{2028}\x{2029}]*)*,`)
+// goja excludes grouping parentheses and comments from literal spans. Walk
+// only the gap between AST elements to locate real array separators.
+const jsTrivia = `(?:[\s\p{Zs}\x{FEFF}\x{2028}\x{2029}]|/\*(?s:.*?)\*/|//[^\r\n\x{2028}\x{2029}]*)*`
 
-func releaseAppendedHosts(saved, current *yaml.Node, owners []string) (string, bool) {
+var afterElement = regexp.MustCompile(`^` + jsTrivia + `(?:\)` + jsTrivia + `)*`)
+var beforeLiteral = regexp.MustCompile(`^` + jsTrivia + `(?:\(` + jsTrivia + `)*$`)
+
+func literalStart(source string, array *ast.ArrayLiteral, i, literal int) (int, bool) {
+	previous := i - 1
+	for previous >= 0 && array.Value[previous] == nil {
+		previous--
+	}
+	pos := int(array.LeftBracket)
+	if previous >= 0 {
+		pos = int(array.Value[previous].Idx1()) - 1
+		if pos < int(array.LeftBracket) || pos > literal {
+			return 0, false
+		}
+	}
+	for j := max(previous, 0); j < i; j++ {
+		pos += len(afterElement.FindString(source[pos:literal]))
+		if pos >= literal || source[pos] != ',' {
+			return 0, false
+		}
+		pos++
+	}
+	return pos, beforeLiteral.MatchString(source[pos:literal])
+}
+
+var errTrustOwnership = errors.New("无法确认受管数组中的地址归属")
+
+func releaseAppendedHosts(saved, current *yaml.Node, owners []string) (string, bool, error) {
 	if current == nil || current.Kind != yaml.ScalarNode || current.Tag != saved.Tag || len(owners) == 0 {
-		return "", false
+		return "", false, nil
 	}
 	now := parseTrustExpression(current.Value)
-	if now == nil || len(now.owned.Value) < len(owners) {
-		return "", false
+	if now == nil {
+		return "", false, nil
 	}
-	var last *ast.StringLiteral
-	for i, owner := range owners {
-		lit, ok := now.owned.Value[i].(*ast.StringLiteral)
-		if !ok || lit.Value.String() != owner {
-			return "", false
-		}
-		last = lit
+	remaining := make(map[string]int, len(owners))
+	for _, owner := range owners {
+		remaining[owner]++
 	}
-	start, end := int(now.owned.LeftBracket), int(now.owned.RightBracket)-1
-	if len(now.owned.Value) > len(owners) {
-		after := int(last.Idx1()) - 1
-		sep := elementSeparator.FindStringIndex(current.Value[after:end])
-		if sep == nil {
-			return "", false
+	var out strings.Builder
+	source := current.Value
+	cursor, removed := 0, 0
+	dynamic := false
+	for i, element := range now.owned.Value {
+		literal, ok := element.(*ast.StringLiteral)
+		if !ok {
+			dynamic = dynamic || element != nil
+			continue
 		}
-		end = after + sep[1]
-	} else if !now.additions {
-		if prior := parseTrustExpression(saved.Value); prior != nil && prior.baseSection == now.baseSection {
-			return saved.Value, true
+		host := literal.Value.String()
+		if remaining[host] == 0 {
+			continue
 		}
+		start, ok := literalStart(source, now.owned, i, int(literal.Idx0())-1)
+		if !ok || start < cursor {
+			return "", false, errTrustOwnership
+		}
+		end := int(literal.Idx1()) - 1
+		end += len(afterElement.FindString(source[end : int(now.owned.RightBracket)-1]))
+		if source[end] == ',' {
+			end++
+		} else if end != int(now.owned.RightBracket)-1 {
+			return "", false, errTrustOwnership
+		}
+		out.WriteString(source[cursor:start])
+		cursor = end
+		removed++
+		remaining[host]--
 	}
-	return current.Value[:start] + current.Value[end:], true
+	// A missing literal is already released. An opaque replacement could still
+	// grant that authority, so its provenance cannot be established statically.
+	if dynamic && removed < len(owners) {
+		return "", false, errTrustOwnership
+	}
+	prior := parseTrustExpression(saved.Value)
+	sameBase := prior != nil && prior.baseSection == now.baseSection
+	if removed == 0 && !sameBase {
+		return "", false, errTrustOwnership
+	}
+	if removed == len(now.owned.Value) && !now.additions && sameBase {
+		return saved.Value, true, nil
+	}
+	out.WriteString(source[cursor:])
+	return out.String(), true, nil
 }
