@@ -1531,6 +1531,9 @@ func edgeStatus() string {
 }
 
 func main() {
+	if err := loadToastProfile(); err != nil {
+		log.Fatal(err)
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
 		fmt.Println(appVersion)
 		return
@@ -1640,6 +1643,7 @@ func main() {
 	// 所以先按默认尺寸把窗口显示出来（保持今天的行为：事件万一没送达也只是
 	// 尺寸不变），等 ApplicationStarted 再按实际可用区收缩并居中。
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		registerToastProfile()
 		go fitMainWindowToScreen(app, window)
 		if edgeDone != nil {
 			go func() {
