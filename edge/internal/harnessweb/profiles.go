@@ -125,3 +125,18 @@ func tailText(value string, max int) string {
 	}
 	return "..." + value[len(value)-max:]
 }
+
+// Let DSH materialize its own built-in template before installing a profile patch.
+func ensureBuiltinProfile(ctx context.Context, command, home, profile string) error {
+	command, err := LocateDSH(command)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	bin, args := execCommand(command, []string{"--profile", profile, "--help"})
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Env = commandEnv(command, map[string]string{"DSH_HOME": home})
+	console.Apply(cmd)
+	return cmd.Run()
+}

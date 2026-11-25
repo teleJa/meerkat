@@ -11,7 +11,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -191,16 +193,30 @@ func cmdRun(args []string, logger *log.Logger) int {
 		logger.Printf("写入 DSH 权限补丁失败：%v", patchErr)
 	}
 	dshCommand := fileCfg.DSHWebCommand
+	owner := harnessweb.NewTrustOwner(id.DeviceID, id.DeviceSecret)
+	publicSource := func() string {
+		if tsnetSvc != nil {
+			if ip := tsnetSvc.IP(); net.ParseIP(ip) != nil {
+				return "http://" + net.JoinHostPort(ip, strconv.Itoa(tsnetedge.DSHListenPort)) + "/"
+			}
+		}
+		if current, err := agent.LoadFileConfig(dir); err == nil {
+			return current.DSHWebPublicURL
+		}
+		return fileCfg.DSHWebPublicURL
+	}
 	harnessManager, managerErr := harnessweb.NewManager(harnessweb.ManagerConfig{
-		Enabled:   fileCfg.DSHWebEnabled,
-		Command:   dshCommand,
-		Port:      dshPort,
-		PublicURL: harnessPublicURL,
-		PatchPath: permissionPatch,
-		ProxyEnv:  dshProxyEnv,
-		Home:      harnessweb.DSHHome(),
-		StateDir:  dir,
-		Logger:    logger,
+		Enabled:         fileCfg.DSHWebEnabled,
+		Command:         dshCommand,
+		Port:            dshPort,
+		PublicURL:       harnessPublicURL,
+		TrustOwner:      &owner,
+		PublicURLSource: publicSource,
+		PatchPath:       permissionPatch,
+		ProxyEnv:        dshProxyEnv,
+		Home:            harnessweb.DSHHome(),
+		StateDir:        dir,
+		Logger:          logger,
 	})
 	if managerErr != nil {
 		logger.Printf("初始化 DSH 管理器失败：%v", managerErr)
@@ -211,7 +227,7 @@ func cmdRun(args []string, logger *log.Logger) int {
 	}
 	harnessCtx, harnessCancel := context.WithCancel(ctx)
 	defer harnessCancel()
-	harnessManager.Start(harnessCtx)
+	var startHarness sync.Once
 	defer harnessManager.Close()
 	installDSH := func(ctx context.Context) (string, error) {
 		result, installErr := dshinstall.Ensure(ctx, logger)
@@ -289,7 +305,15 @@ func cmdRun(args []string, logger *log.Logger) int {
 		}}
 	}
 	client, err := wsclient.New(wsclient.Config{
-		Identity:          *id,
+		Identity: *id,
+		OnAuthenticated: func() {
+			startHarness.Do(func() {
+				harnessManager.Start(harnessCtx)
+				if tsnetSvc != nil {
+					tsnetSvc.OnIPChange(func(string) { harnessManager.Refresh() })
+				}
+			})
+		},
 		Dialer:            wsDialer,
 		HeartbeatInterval: *heartbeatInterval,
 		MetricsInterval:   *metricsInterval,
@@ -306,6 +330,14 @@ func cmdRun(args []string, logger *log.Logger) int {
 	logger.Printf("托管执行：allow_root=%s harness=%s 前缀参数=%d 追加参数=%d",
 		manager.AllowRoot(), harnessPath, len(prefixArgs), len(extraArgs))
 	if err := client.Run(ctx); err != nil {
+		var fatal *wsclient.FatalError
+		if errors.As(err, &fatal) && fatal.DeviceRevoked {
+			harnessCancel()
+			harnessManager.Close()
+			if cleanupErr := harnessweb.UpdateTrust(harnessweb.DSHHome(), dir, &owner, "", ""); cleanupErr != nil {
+				logger.Printf("清理设备信任失败：%v", cleanupErr)
+			}
+		}
 		logger.Printf("运行失败：%v", err)
 		return 1
 	}

@@ -25,7 +25,7 @@ func (h *Hub) setHarnessURL(deviceID, rawURL string, now time.Time) error {
 
 func (h *Hub) getHarnessURL(deviceID string) (string, error) {
 	var rawURL string
-	err := h.db.QueryRow("SELECT url FROM device_harness WHERE device_id = ?", deviceID).Scan(&rawURL)
+	err := h.db.QueryRow("SELECT url FROM device_harness JOIN devices ON devices.id = device_harness.device_id WHERE device_id = ? AND revoked_at IS NULL", deviceID).Scan(&rawURL)
 	return rawURL, err
 }
 

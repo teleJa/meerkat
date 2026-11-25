@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"meerkat/edge/internal/filelock"
 	"os"
 	"path/filepath"
 )
@@ -23,7 +24,7 @@ func acquireRunLock(dir string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	locked, err := tryRunLock(file)
+	locked, err := filelock.Try(file)
 	if !locked {
 		_ = file.Close()
 		if err != nil {

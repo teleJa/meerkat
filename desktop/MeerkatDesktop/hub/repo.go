@@ -1,8 +1,10 @@
 package hub
 
 import (
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -109,6 +111,8 @@ func (h *Hub) findReusableDevice(input DeviceInfo) (*DeviceRow, error) {
 }
 
 func (h *Hub) registerDevice(input DeviceInfo, edgeVersion, protocolVersion string, now time.Time) (*registeredDevice, error) {
+	h.connMu.Lock()
+	defer h.connMu.Unlock()
 	capabilities := input.Capabilities
 	if capabilities == nil {
 		capabilities = []string{}
@@ -171,13 +175,18 @@ func (h *Hub) getDevice(id string) (*DeviceRow, error) {
 	return &device, err
 }
 
+var errDeviceRevoked = errors.New("device_revoked")
+
 func (h *Hub) getDeviceBySecret(id, secret string) (*DeviceRow, error) {
 	device, err := h.getDevice(id)
 	if err != nil || device == nil {
 		return nil, err
 	}
-	if device.RevokedAt != nil || tokenHash(secret) != device.SecretHash {
+	if subtle.ConstantTimeCompare([]byte(tokenHash(secret)), []byte(device.SecretHash)) != 1 {
 		return nil, nil
+	}
+	if device.RevokedAt != nil {
+		return nil, errDeviceRevoked
 	}
 	return device, nil
 }
@@ -212,9 +221,13 @@ func (h *Hub) touchDevice(id string, lastSeen, lastMetrics *string, bootID, edge
 	)
 }
 
-func (h *Hub) revokeDevice(id string, now time.Time) {
-	_, _ = h.db.Exec("UPDATE devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL", nowISO(now), id)
+func (h *Hub) revokeDevice(id string, now time.Time) error {
+	_, err := h.db.Exec("UPDATE devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL", nowISO(now), id)
+	if err != nil {
+		return err
+	}
 	h.logEvent("device.revoked", &id, nil)
+	return nil
 }
 
 func (h *Hub) insertMetric(deviceID, sampledAt string, metrics MetricsPayload, receivedAt time.Time) error {

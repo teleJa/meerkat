@@ -426,19 +426,29 @@ func (h *Hub) handleDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 
 func (h *Hub) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)
+	h.connMu.Lock()
 	device, err := h.getDevice(id)
 	if err != nil || device == nil {
+		h.connMu.Unlock()
 		writeError(w, http.StatusNotFound, "device_not_found", "设备不存在")
 		return
 	}
-	h.revokeDevice(id, time.Now())
-	h.signalNotificationDevices()
-	h.connMu.Lock()
+	if err := h.revokeDevice(id, time.Now()); err != nil {
+		h.connMu.Unlock()
+		writeError(w, http.StatusInternalServerError, "internal_error", "撤销设备失败")
+		return
+	}
 	client := h.connections[id]
 	delete(h.connections, id)
 	h.connMu.Unlock()
+	h.dropHarnessProxy(id)
+	h.signalNotificationDevices()
 	if client != nil {
-		_ = client.conn.Close()
+		if client.secretHash == device.SecretHash {
+			client.closeRevoked()
+		} else {
+			client.fail(4401, "auth_failed", "凭据已更换")
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"device_id": id, "revoked": true})
 }

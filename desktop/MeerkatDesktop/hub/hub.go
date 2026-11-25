@@ -69,15 +69,17 @@ type harnessProxy struct {
 	target            string
 	login             harnessLoginCache
 	closed            atomic.Bool
+	connections       sync.Map // active upstream sockets, including upgraded requests
 	pathTransport     *http.Transport
 	upstreamTransport *http.Transport
 }
 
 type wsClient struct {
-	hub      *Hub
-	conn     *websocket.Conn
-	deviceID string
-	writeMu  sync.Mutex
+	hub        *Hub
+	conn       *websocket.Conn
+	deviceID   string
+	secretHash string
+	writeMu    sync.Mutex
 }
 
 func tokenHash(value string) string {

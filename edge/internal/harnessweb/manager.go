@@ -55,12 +55,14 @@ type State struct {
 
 // ManagerConfig 是 Manager 的依赖；字段与 harnessweb.Config 对齐。
 type ManagerConfig struct {
-	Enabled   bool
-	Command   string
-	Port      int
-	PublicURL string
-	PatchPath string
-	ProxyEnv  map[string]string
+	Enabled         bool
+	Command         string
+	Port            int
+	PublicURL       string
+	TrustOwner      *TrustOwner
+	PublicURLSource func() string
+	PatchPath       string
+	ProxyEnv        map[string]string
 	// Home 是 $DSH_HOME；为空时使用 DSHHome()。
 	Home string
 	// StateDir 是 Edge 状态目录，用来保存 profile/mode 选择。
@@ -73,7 +75,8 @@ type Manager struct {
 	cfg ManagerConfig
 	log *log.Logger
 
-	opMu sync.Mutex
+	opMu   sync.Mutex
+	closed bool
 
 	mu         sync.Mutex
 	state      State
@@ -82,6 +85,7 @@ type Manager struct {
 	saved      bool
 	sender     func(State)
 	targetPort func(int)
+	launchURL  string
 
 	ctx context.Context
 }
@@ -194,6 +198,24 @@ func (m *Manager) loop() {
 
 // Refresh 重读发现文件与自己的子进程，更新状态并上报变化。
 func (m *Manager) Refresh() {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+	m.refresh()
+}
+
+func (m *Manager) refresh() {
+	if m.closed {
+		return
+	}
+	if m.cfg.PublicURLSource != nil {
+		u := m.cfg.PublicURLSource()
+		if u != m.cfg.PublicURL {
+			if err := m.setPublicURL(u); err != nil {
+				m.setError(err)
+				return
+			}
+		}
+	}
 	m.refreshProfileList()
 
 	m.mu.Lock()
@@ -262,7 +284,7 @@ func (m *Manager) Apply(action, profile, mode string) error {
 	case "create":
 		return m.opCreate(profile)
 	case "refresh":
-		m.Refresh()
+		m.refresh()
 		return nil
 	default:
 		return fmt.Errorf("未知的 DSH 动作 %q", action)
@@ -297,11 +319,16 @@ func (m *Manager) Restart(ctx context.Context, command string) error {
 func (m *Manager) Close() {
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
+	m.closed = true
 	m.stopOwned()
 }
 
 func (m *Manager) opConnect(profile string, persist bool) error {
 	profile = normalizeProfile(profile)
+	if err := m.syncTrust(profile, m.cfg.PublicURL); err != nil {
+		m.setError(err)
+		return err
+	}
 	m.setState(func(state *State) {
 		state.Profile = profile
 		state.Mode = ModeConnect
@@ -331,6 +358,18 @@ func (m *Manager) opConnect(profile string, persist bool) error {
 
 func (m *Manager) opLaunch(profile string, persist bool) error {
 	profile = normalizeProfile(profile)
+	if m.cfg.TrustOwner != nil && m.cfg.PublicURL != "" && reservedProfiles[profile] {
+		if _, err := os.Stat(filepath.Join(ProfilesDir(m.cfg.Home), profile)); os.IsNotExist(err) {
+			if err := ensureBuiltinProfile(m.ctx, m.cfg.Command, m.cfg.Home, profile); err != nil {
+				m.setError(err)
+				return err
+			}
+		}
+	}
+	if err := m.syncTrust(profile, m.cfg.PublicURL); err != nil {
+		m.setError(err)
+		return err
+	}
 	m.setState(func(state *State) {
 		state.Profile = profile
 		state.Mode = ModeLaunch
@@ -350,7 +389,8 @@ func (m *Manager) opLaunch(profile string, persist bool) error {
 		m.setState(func(state *State) {
 			state.Status = StatusRunning
 			state.Owner = OwnerEdge
-			state.URL = m.reportURL(current.URL())
+			m.launchURL = current.URL()
+			state.URL = m.reportURL(m.launchURL)
 		})
 		m.setTargetPort(current.Port())
 		return nil
@@ -367,11 +407,15 @@ func (m *Manager) opLaunch(profile string, persist bool) error {
 		state.Owner = ""
 		state.URL = ""
 	})
+	public := m.cfg.PublicURL
+	if m.cfg.TrustOwner != nil {
+		public = ""
+	} // Managed URLs are advertised by Edge and can change while DSH is running.
 	service, err := Start(m.ctx, Config{
 		Enabled:        true,
 		Command:        m.cfg.Command,
 		Port:           m.cfg.Port,
-		PublicURL:      m.cfg.PublicURL,
+		PublicURL:      public,
 		PatchPath:      m.cfg.PatchPath,
 		ProxyEnv:       m.cfg.ProxyEnv,
 		Profile:        profile,
@@ -393,7 +437,8 @@ func (m *Manager) opLaunch(profile string, persist bool) error {
 	m.setState(func(state *State) {
 		state.Status = StatusRunning
 		state.Owner = OwnerEdge
-		state.URL = m.reportURL(service.URL())
+		m.launchURL = service.URL()
+		state.URL = m.reportURL(m.launchURL)
 		state.Error = ""
 	})
 	return nil
@@ -448,7 +493,8 @@ func (m *Manager) applyExternal(profile string, discovery Discovery) {
 		state.Profile = profile
 		state.Status = StatusRunning
 		state.Owner = OwnerExternal
-		state.URL = m.reportURL(discovery.URL)
+		m.launchURL = discovery.URL
+		state.URL = m.reportURL(m.launchURL)
 		state.Error = ""
 	})
 }
@@ -629,4 +675,25 @@ func (m *Manager) persist(profile, mode string) {
 		cleanup()
 		m.log.Printf("保存 DSH 选择失败：%v", err)
 	}
+}
+
+func (m *Manager) syncTrust(profile, public string) error {
+	if m.cfg.TrustOwner == nil {
+		return nil
+	}
+	return UpdateTrust(m.cfg.Home, m.cfg.StateDir, m.cfg.TrustOwner, profile, public)
+}
+func (m *Manager) setPublicURL(public string) error {
+	state := m.Snapshot()
+	if m.cfg.Enabled {
+		if err := m.syncTrust(state.Profile, public); err != nil {
+			return err
+		}
+	}
+	m.cfg.PublicURL = public
+	if state.URL != "" || state.Status == StatusRunning {
+		m.setState(func(s *State) { s.URL = m.reportURL(m.launchURL) })
+	}
+
+	return nil
 }

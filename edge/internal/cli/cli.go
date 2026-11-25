@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"meerkat/edge/internal/buildinfo"
+	"meerkat/edge/internal/harnessweb"
 	"meerkat/edge/internal/identity"
 )
 
@@ -26,6 +27,26 @@ func Run(args []string) int {
 		return cmdPair(args[1:], logger)
 	case "run":
 		return cmdRun(args[1:], logger)
+	case "trust-cleanup":
+		fs := flag.NewFlagSet("trust-cleanup", flag.ContinueOnError)
+		state := fs.String("state-dir", "", "Edge 身份目录")
+		if ok, code := parseFlags(fs, args[1:]); !ok {
+			return code
+		}
+		dir, err := resolveStateDir(*state)
+		if err == nil {
+			var lock *os.File
+			lock, err = acquireRunLock(dir)
+			if err == nil {
+				defer lock.Close()
+				err = harnessweb.UpdateTrust(harnessweb.DSHHome(), dir, nil, "", "")
+			}
+		}
+		if err != nil {
+			logger.Print(err)
+			return 1
+		}
+		return 0
 	case "doctor":
 		return cmdDoctor(args[1:], logger)
 	case "version":
@@ -50,6 +71,7 @@ func Usage(w io.Writer) {
                       [--allow-root <目录>] [--claude-path <路径>] [--harness-cmd <路径>] [--harness-arg <参数>...]
                       [--no-console]
   meerkat-edge pair   --center <url> --token <配对令牌> [--name <设备名>] [--role <角色>] [--state-dir <目录>]
+  meerkat-edge trust-cleanup [--state-dir <目录>]
   meerkat-edge doctor [--center <url>] [--state-dir <目录>]
   meerkat-edge version
 

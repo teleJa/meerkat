@@ -85,13 +85,20 @@ func (h *Hub) handleWS(w http.ResponseWriter, r *http.Request) {
 		client.fail(4400, "unsupported_protocol", "仅支持协议版本 "+ProtocolVersion)
 		return
 	}
+	h.connMu.Lock()
 	device, err := h.getDeviceBySecret(hello.DeviceID, hello.DeviceSecret)
 	if err != nil || device == nil {
+		h.connMu.Unlock()
+		if err == errDeviceRevoked {
+			client.closeRevoked()
+			return
+		}
 		client.fail(4401, "auth_failed", "设备不存在或凭据已撤销")
 		return
 	}
 	client.deviceID = device.ID
-	client.hub.connMu.Lock()
+	client.secretHash = device.SecretHash
+
 	if previous := h.connections[device.ID]; previous != nil && previous != client {
 		_ = previous.conn.Close()
 	}
@@ -224,4 +231,10 @@ func ptrString(value any) *string {
 		return &text
 	}
 	return nil
+}
+
+// Send the definitive reason in the close frame so receivers can distinguish a disconnect.
+func (c *wsClient) closeRevoked() {
+	_ = c.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(4401, "device_revoked"), time.Now().Add(2*time.Second))
+	_ = c.conn.Close()
 }

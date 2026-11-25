@@ -168,7 +168,7 @@ func Start(ctx context.Context, cfg Config, logger *log.Logger) (*Service, error
 		if err != nil || parsed.Host == "" {
 			return nil, fmt.Errorf("dsh_web_public_url 无效: %q", publicURL)
 		}
-		webArgs = append(webArgs, "--public-url", publicURL, "--trusted-host", parsed.Host)
+		webArgs = append(webArgs, "--public-url", publicURL)
 	}
 	command, err := LocateDSH(cfg.Command)
 	if err != nil {

@@ -42,6 +42,7 @@ type Service struct {
 	status       string
 	mu           sync.Mutex
 	ip           string
+	onIPChange   func(string)
 	listen       net.Listener
 	dshPort      int
 	apiOnce      sync.Once
@@ -56,6 +57,30 @@ func (s *Service) IP() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.ip
+}
+
+// OnIPChange subscribes to address updates, including a delayed login.
+func (s *Service) OnIPChange(fn func(string)) {
+	s.mu.Lock()
+	s.onIPChange = fn
+	ip := s.ip
+	s.mu.Unlock()
+	if fn != nil && ip != "" {
+		fn(ip)
+	}
+}
+func (s *Service) updateIP(ip string) {
+	s.mu.Lock()
+	if s.ip == ip {
+		s.mu.Unlock()
+		return
+	}
+	s.ip = ip
+	fn := s.onIPChange
+	s.mu.Unlock()
+	if fn != nil {
+		fn(ip)
+	}
 }
 
 func (s *Service) Dial(ctx context.Context, network, address string) (net.Conn, error) {
@@ -111,9 +136,9 @@ func (s *Service) Wait(ctx context.Context) error {
 		return err
 	}
 	ip4, _ := s.server.TailscaleIPs()
-	s.mu.Lock()
-	s.ip = ip4.String()
-	s.mu.Unlock()
+	if ip4.IsValid() {
+		s.updateIP(ip4.String())
+	}
 	s.setState("running", "")
 	s.log.Printf("tsnet-edge 已上线：%s (%s)", st.Self.HostName, ip4.String())
 	return nil
@@ -158,9 +183,7 @@ func (s *Service) monitorStatus(ctx context.Context) {
 			ips = append(ips, ip.String())
 		}
 		if len(ips) > 0 {
-			s.mu.Lock()
-			s.ip = ips[0]
-			s.mu.Unlock()
+			s.updateIP(ips[0])
 		}
 		s.mu.Lock()
 		localAPI := s.apiURL

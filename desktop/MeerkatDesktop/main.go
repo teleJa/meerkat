@@ -820,13 +820,17 @@ func watchEdgeNetworkLogin(app *application.App) {
 	}
 }
 
-func startEdge() {
+func edgeCommand() string {
 	bin := bundledEdge()
 	if bin == "" {
 		if value := strings.TrimSpace(os.Getenv("MEERKAT_EDGE_BIN")); value != "" {
 			bin = value
 		}
 	}
+	return bin
+}
+func startEdge() {
+	bin := edgeCommand()
 	if bin == "" {
 		return
 	}
@@ -1013,9 +1017,33 @@ func parseJoinCode(code string) (joinCodePayload, error) {
 	return payload, nil
 }
 
+var nodeJoinMu sync.Mutex
+
 func writeNodeConfig(payload joinCodePayload) error {
+	nodeJoinMu.Lock()
+	defer nodeJoinMu.Unlock()
 	stateDir := filepath.Join(configDir(), "edge-node")
-	_ = os.RemoveAll(stateDir)
+	if _, err := os.Stat(stateDir); err == nil {
+		if edgeProcess != nil && filepath.Clean(appCfg.EdgeStateDir) == stateDir {
+			if err := stopDesktopEdge(); err != nil {
+				return err
+			}
+		}
+		bin := edgeCommand()
+		if bin == "" {
+			return fmt.Errorf("找不到 Edge，无法释放旧工作区信任")
+		}
+		cmd := exec.Command(bin, "trust-cleanup", "--state-dir", stateDir)
+		hideConsole(cmd)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("释放旧工作区信任失败: %w", err)
+		}
+		if err := os.RemoveAll(stateDir); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	home, _ := os.UserHomeDir()
 	cfg := appConfig{
 		Mode:          "node",
@@ -1487,22 +1515,29 @@ func buildUIHandler(dist fs.FS, proxy http.Handler) http.Handler {
 	})
 }
 
+func stopDesktopEdge() error {
+	if edgeProcess == nil {
+		return nil
+	}
+	_ = edgeParentPipe.Close()
+	timer := time.NewTimer(3 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-edgeDone:
+		return nil
+	case <-timer.C:
+	}
+	if err := edgeProcess.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	<-edgeDone
+	return nil
+}
+
 func cleanupChildren() {
 	cleanupOnce.Do(func() {
-		if edgeProcess != nil {
-			log.Printf("清理 Edge pid=%d", edgeProcess.Process.Pid)
-			_ = edgeParentPipe.Close()
-			timer := time.NewTimer(3 * time.Second)
-			defer timer.Stop()
-			select {
-			case <-edgeDone:
-			case <-timer.C:
-				if err := edgeProcess.Process.Kill(); err == nil || errors.Is(err, os.ErrProcessDone) {
-					<-edgeDone
-				} else {
-					log.Printf("结束 Edge 失败: %v", err)
-				}
-			}
+		if err := stopDesktopEdge(); err != nil {
+			log.Printf("结束 Edge 失败: %v", err)
 		}
 		if embeddedHub != nil {
 			log.Printf("关闭 Go Hub")
