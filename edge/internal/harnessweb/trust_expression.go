@@ -3,7 +3,6 @@ package harnessweb
 import (
 	"errors"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/dop251/goja/ast"
@@ -151,7 +150,7 @@ func sameStaticTrust(a, b ast.Expression) bool {
 	}
 }
 
-func recordedTrustExpression(history map[string]bool, source string, owners []string) bool {
+func recordedTrustExpression(history map[string]bool, source string) bool {
 	if history[source] {
 		return true
 	}
@@ -169,7 +168,8 @@ func recordedTrustExpression(history map[string]bool, source string, owners []st
 		}
 		// The ledger embeds the historical wrapper as its base operand. Match
 		// that wrapper around the array and its original entries in order.
-		// Additional literal addresses must be outside the current lease set.
+		// A manual literal can independently grant a currently leased address.
+		// A copied current block has an extra wrapper around this historical base.
 		if prior[:int(saved.owned.LeftBracket)] != source[:int(current.owned.LeftBracket)] ||
 			prior[int(saved.owned.RightBracket)-1:] != source[int(current.owned.RightBracket)-1:] ||
 			len(current.owned.Value) < len(saved.owned.Value) {
@@ -181,8 +181,7 @@ func recordedTrustExpression(history map[string]bool, source string, owners []st
 				matched++
 				continue
 			}
-			literal, ok := item.(*ast.StringLiteral)
-			if !ok || slices.Contains(owners, literal.Value.String()) {
+			if _, ok := item.(*ast.StringLiteral); !ok {
 				matched = -1
 				break
 			}

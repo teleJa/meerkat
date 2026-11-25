@@ -309,7 +309,7 @@ func removeSerializedTrust(current []byte, block string, owners []string) ([]byt
 		if marker != nil && !sameTrustNode(marker, field(row, trustRowID)) {
 			continue
 		}
-		if currentHosts == nil || marker == nil && currentHosts.Tag == savedHosts.Tag && recordedTrustExpression(history, currentHosts.Value, owners) {
+		if currentHosts == nil || marker == nil && currentHosts.Tag == savedHosts.Tag && recordedTrustExpression(history, currentHosts.Value) {
 			continue
 		}
 		releasedExpr, matched, err := releaseAppendedHosts(savedHosts, currentHosts, owners)

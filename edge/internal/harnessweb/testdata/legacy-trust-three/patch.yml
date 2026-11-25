@@ -1,0 +1,10 @@
+
+# Meerkat managed trusted hosts
+- config:
+    trustedHosts: !!js "[...new Set([...(ctx.get('webStartup')?.trustedHosts ?? []), ...([]), ...[\"manual.test:80\"]])]"
+  id: connection
+
+# Meerkat managed trusted hosts
+- config:
+    trustedHosts: !!js "[...new Set([...(ctx.get('webStartup')?.trustedHosts ?? []), ...([...new Set([...(ctx.get('webStartup')?.trustedHosts ?? []), ...([]), ...[\"manual.test:80\"]])]), ...[\"active.test:80\",\"exclusive.test:80\",\"manual.test:80\"]])]"
+  id: connection
