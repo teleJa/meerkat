@@ -179,6 +179,16 @@ func TestTrustRewriteKeepsIndependentEdits(t *testing.T) {
 }
 
 func TestTrustExpressionAppendLifecycle(t *testing.T) {
+	for name, formatted := range map[string]string{
+		"compact":   `"old.test:80","shared.test:80"`,
+		"space":     `"old.test:80", "shared.test:80"`,
+		"multiline": "\"old.test:80\", \n  'shared.test:80'",
+	} {
+		t.Run(name, func(t *testing.T) { testTrustExpressionAppendLifecycle(t, formatted) })
+	}
+}
+
+func testTrustExpressionAppendLifecycle(t *testing.T, formatted string) {
 	home := t.TempDir()
 	profile := filepath.Join(home, "profiles", "lab")
 	if err := os.MkdirAll(profile, 0700); err != nil {
@@ -230,11 +240,17 @@ func TestTrustExpressionAppendLifecycle(t *testing.T) {
 		t.Fatal(expr.Value)
 	}
 	expr.Value = strings.TrimSuffix(expr.Value, `]])]`) + `, 'shared.test:80'], ...['extra.test:80']]), 'outer.test:80']`
+	expr.Value = strings.Replace(expr.Value, `"old.test:80","shared.test:80"`, formatted, 1)
 	data, err := yaml.Marshal(rows)
 	if err != nil {
 		t.Fatal(err)
 	}
 	write(data)
+	update(a, "old.test:80")
+	unchanged, err := os.ReadFile(patch)
+	if err != nil || string(unchanged) != string(data) {
+		t.Fatalf("unchanged lease rewrote formatted patch: %v", err)
+	}
 	check := func(want ...string) {
 		t.Helper()
 		expr := lastExpr(readRows()).Value

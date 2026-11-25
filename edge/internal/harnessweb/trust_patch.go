@@ -251,22 +251,42 @@ const addressList = `\s*` + addressLiteral + `(?:\s*,\s*` + addressLiteral + `)*
 const addressTerm = `(?:` + addressLiteral + `|\.\.\.\s*\[` + addressList + `\])`
 const additions = `(?:\s*,\s*` + addressTerm + `)*\s*,?\s*`
 
-var appendedTrustTail = regexp.MustCompile(`^(` + additions + `)\]` + additions + `\]\s*\)` + additions + `\]$`)
+// Capture the opaque base, the managed array body, and the two append sites.
+// Match the complete generated shape so an identical array inside the base
+// or in a manual spread cannot become the owner of a ledger entry.
+var managedExpression = regexp.MustCompile(`(?s)^\s*\[\s*\.\.\.\s*new\s+Set\s*\(\s*\[\s*\.\.\.\s*\(\s*ctx\.get\('webStartup'\)\?\.trustedHosts\s*\?\?\s*\[\s*\]\s*\)\s*,\s*\.\.\.\s*\((.*)\)\s*,\s*\.\.\.\s*\[(` + addressList + `)\](` + additions + `)\]\s*\)(` + additions + `)\]\s*$`)
+var hostElement = regexp.MustCompile(addressLiteral)
 
 func releaseAppendedHosts(saved, current *yaml.Node, owners []string) (string, bool) {
 	if current == nil || current.Kind != yaml.ScalarNode || current.Tag != saved.Tag || len(owners) == 0 {
 		return "", false
 	}
-	encoded, _ := json.Marshal(owners)
-	prefix, ok := strings.CutSuffix(saved.Value, "..."+string(encoded)+"])]")
-	if !ok {
+	before := managedExpression.FindStringSubmatch(saved.Value)
+	span := managedExpression.FindStringSubmatchIndex(current.Value)
+	if before == nil || span == nil || before[1] != current.Value[span[2]:span[3]] {
 		return "", false
 	}
-	tail, ok := strings.CutPrefix(current.Value, prefix+"..."+strings.TrimSuffix(string(encoded), "]"))
-	if !ok || !appendedTrustTail.MatchString(tail) {
+	body := current.Value[span[4]:span[5]]
+	elements := hostElement.FindAllStringIndex(body, -1)
+	savedElements := hostElement.FindAllString(before[2], -1)
+	if len(savedElements) != len(owners) || len(elements) < len(owners) {
 		return "", false
 	}
-	return prefix + "...[" + strings.TrimPrefix(strings.TrimLeft(tail, " \t\r\n"), ","), true
+	for i, owner := range owners {
+		pos := elements[i]
+		prior := savedElements[i]
+		if prior[1:len(prior)-1] != owner || body[pos[0]+1:pos[1]-1] != owner {
+			return "", false
+		}
+	}
+	end := span[5]
+	if len(elements) > len(owners) {
+		end = span[4] + elements[len(owners)][0]
+	} else if !hostElement.MatchString(current.Value[span[6]:span[7]]) && !hostElement.MatchString(current.Value[span[8]:span[9]]) {
+		// Formatting alone should release the entire echoed field.
+		return saved.Value, true
+	}
+	return current.Value[:span[4]] + current.Value[end:], true
 }
 
 func removeSerializedTrust(current []byte, block string, owners []string) ([]byte, error) {
