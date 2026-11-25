@@ -44,6 +44,7 @@ type Service struct {
 	ip           string
 	listen       net.Listener
 	dshPort      int
+	apiOnce      sync.Once
 	apiURL       string
 	apiErr       string
 	hubURL       string
@@ -118,6 +119,17 @@ func (s *Service) Wait(ctx context.Context) error {
 	return nil
 }
 
+// A paired Edge can finish its interactive login after the initial Wait times out.
+func (s *Service) startLocalAPIWhenReady(ctx context.Context, state string, hasIP bool) {
+	if state == "Running" && hasIP {
+		s.apiOnce.Do(func() {
+			if err := s.StartLocalAPI(ctx); err != nil {
+				s.log.Printf("启动 Edge 本地 Hub API 代理失败：%v", err)
+			}
+		})
+	}
+}
+
 func (s *Service) monitorStatus(ctx context.Context) {
 	client, err := s.server.LocalClient()
 	if err != nil {
@@ -137,6 +149,10 @@ func (s *Service) monitorStatus(ctx context.Context) {
 			s.setState("error", err.Error())
 			continue
 		}
+		if st.Self == nil {
+			continue
+		}
+		s.startLocalAPIWhenReady(ctx, st.BackendState, len(st.Self.TailscaleIPs) > 0)
 		ips := make([]string, 0, len(st.Self.TailscaleIPs))
 		for _, ip := range st.Self.TailscaleIPs {
 			ips = append(ips, ip.String())

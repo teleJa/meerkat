@@ -170,11 +170,6 @@ func cmdRun(args []string, logger *log.Logger) int {
 		id = paired
 		logger.Printf("自动配对完成：%s", id.Describe())
 	}
-	if tsnetSvc != nil && tsnetSvc.IP() != "" {
-		if apiErr := tsnetSvc.StartLocalAPI(tsnetCtx); apiErr != nil {
-			logger.Printf("启动 Edge 本地 Hub API 代理失败：%v", apiErr)
-		}
-	}
 	harnessPublicURL := fileCfg.DSHWebPublicURL
 	dshPort := fileCfg.DSHWebPort
 	if dshPort == 0 {
