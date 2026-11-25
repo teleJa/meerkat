@@ -140,6 +140,41 @@ func TestLegacyExactRow(t *testing.T) {
 	}
 }
 
+func TestLegacyEmptyBaseAmbiguity(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		f := loadLegacyFixture(t, "legacy-trust")
+		prefix := `trustedHosts: !!js "`
+		_, scalar, ok := strings.Cut(f.base, prefix)
+		if !ok {
+			t.Fatal("missing historical trustedHosts")
+		}
+		inner, _, ok := strings.Cut(scalar, "\"\n")
+		if !ok || strings.Count(f.block, inner) != 1 {
+			t.Fatal("expected historical expression embedded once")
+		}
+		const addresses = `\"exclusive.test:80\",\"manual.test:80\"`
+		const manual = `\"manual.test:80\"`
+		// A: only simplify the managed row. B: grant exclusive manually and
+		// remove it from the simplified managed row, then swap the rows.
+		simplified := strings.Replace(f.block, inner, "[]", 1)
+		manualGrant := strings.Replace(f.base, manual, addresses, 1)
+		managedWithoutExclusive := strings.Replace(simplified, addresses, manual, 1)
+		a, b := f.base+simplified, managedWithoutExclusive+manualGrant
+		if reverse {
+			a, b = simplified+f.base, manualGrant+managedWithoutExclusive
+		}
+		if a != b || manualGrant == f.base || simplified == f.block {
+			t.Fatal("expected distinct edits to produce identical documents")
+		}
+		f.write(f.patch, []byte(a))
+		owner := f.owners["exclusive"].TrustOwner
+		err := UpdateTrust(f.home, filepath.Join(f.real, "exclusive"), &owner, "", "")
+		if err == nil || !strings.Contains(err.Error(), "归属不唯一") || string(f.read(f.patch)) != a || !bytes.Equal(f.read(f.lp), f.data) {
+			t.Fatalf("ambiguous history must preserve patch and ledger: %v", err)
+		}
+	}
+}
+
 func TestLegacyManualSharesActiveHost(t *testing.T) {
 	for _, order := range [][]string{
 		{"exclusive", "active", "device"}, {"exclusive", "device", "active"},

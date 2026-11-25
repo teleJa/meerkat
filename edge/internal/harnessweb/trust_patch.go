@@ -297,6 +297,7 @@ func removeSerializedTrust(current []byte, block string, owners []string) ([]byt
 	}
 	var replacement string
 	var scanErr error
+	historicalCandidates := 0
 	for i, row := range root.Content {
 		id := field(row, "id")
 		cfg := field(row, "config")
@@ -309,10 +310,16 @@ func removeSerializedTrust(current []byte, block string, owners []string) ([]byt
 		if marker != nil && !sameTrustNode(marker, field(row, trustRowID)) {
 			continue
 		}
-		if currentHosts == nil || marker == nil && currentHosts.Tag == savedHosts.Tag && recordedTrustExpression(history, currentHosts.Value) {
+		if currentHosts == nil {
 			continue
 		}
 		releasedExpr, matched, err := releaseAppendedHosts(savedHosts, currentHosts, owners)
+		if marker == nil && currentHosts.Tag == savedHosts.Tag && recordedTrustExpression(history, currentHosts.Value) {
+			if matched || err != nil {
+				historicalCandidates++
+			}
+			continue
+		}
 		if err != nil {
 			scanErr = err
 			continue
@@ -328,6 +335,9 @@ func removeSerializedTrust(current []byte, block string, owners []string) ([]byt
 		return nil, scanErr
 	}
 	if index < 0 {
+		if historicalCandidates > 1 {
+			return nil, errors.New("受管地址归属不唯一：多行均符合旧手工配置与租约记录")
+		}
 		return nil, errors.New("找不到与账本匹配的受管地址")
 	}
 	row := root.Content[index]
