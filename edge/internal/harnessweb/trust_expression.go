@@ -97,6 +97,26 @@ func parseTrustExpression(source string) *trustExpression {
 	return &trustExpression{owned: owned, baseSection: source[int(startup.RightBracket) : int(owned.LeftBracket)-1], additions: len(args.Value) > 3 || len(outer.Value) > 1}
 }
 
+// trustBlock embeds the effective expression verbatim as the second spread.
+// A previously released row can therefore be identified even when its manual
+// address is also leased by the new block. Only unwrap our exact delimiter.
+func inheritedTrustExpressions(saved string) map[string]bool {
+	inherited := make(map[string]bool)
+	for expr := parseTrustExpression(saved); expr != nil; expr = parseTrustExpression(saved) {
+		base, ok := strings.CutPrefix(expr.baseSection, "), ...(")
+		if !ok {
+			break
+		}
+		base, ok = strings.CutSuffix(base, "), ...")
+		if !ok {
+			break
+		}
+		inherited[base] = true
+		saved = base
+	}
+	return inherited
+}
+
 // goja excludes grouping parentheses and comments from literal spans. Walk
 // only the gap between AST elements to locate real array separators.
 const jsTrivia = `(?:[\s\p{Zs}\x{FEFF}\x{2028}\x{2029}]|/\*(?s:.*?)\*/|//[^\r\n\x{2028}\x{2029}]*)*`
@@ -178,7 +198,8 @@ func releaseAppendedHosts(saved, current *yaml.Node, owners []string) (string, b
 	prior := parseTrustExpression(saved.Value)
 	sameBase := prior != nil && prior.baseSection == now.baseSection
 	if removed == 0 && !sameBase {
-		return "", false, errTrustOwnership
+		// This static array contains no owned literals and has a different base.
+		return "", false, nil
 	}
 	if removed == len(now.owned.Value) && !now.additions && sameBase {
 		return saved.Value, true, nil

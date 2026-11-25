@@ -273,32 +273,44 @@ func removeSerializedTrust(current []byte, block string, owners []string) ([]byt
 	}
 	index := -1
 	var previous, inherited *yaml.Node
+	savedHosts := field(config, "trustedHosts")
+	history := inheritedTrustExpressions(savedHosts.Value)
+	var replacement string
+	var scanErr error
 	for i, row := range root.Content {
 		id := field(row, "id")
 		cfg := field(row, "config")
 		if id == nil || id.Value != "connection" || field(row, "insert") != nil || cfg == nil {
 			continue
 		}
-		savedHosts, currentHosts := field(config, "trustedHosts"), field(cfg, "trustedHosts")
-		releasedExpr, appended, err := releaseAppendedHosts(savedHosts, currentHosts, owners)
-		if err != nil {
-			return nil, err
-		}
-		if sameTrustNode(savedHosts, currentHosts) || appended {
-			if appended && currentHosts.Value != savedHosts.Value {
-				currentHosts.Value = releasedExpr
-			}
-			if index >= 0 {
-				return nil, errors.New("受管地址归属不唯一")
-			}
-			index, inherited = i, previous
-		}
+		currentHosts := field(cfg, "trustedHosts")
+		underlying := previous
 		previous = cfg
+		if currentHosts == nil || history[currentHosts.Value] && currentHosts.Tag == savedHosts.Tag {
+			continue
+		}
+		releasedExpr, matched, err := releaseAppendedHosts(savedHosts, currentHosts, owners)
+		if err != nil {
+			scanErr = err
+			continue
+		}
+		if matched || sameTrustNode(savedHosts, currentHosts) {
+			if index >= 0 {
+				scanErr = errors.New("受管地址归属不唯一")
+			}
+			index, inherited, replacement = i, underlying, releasedExpr
+		}
+	}
+	if scanErr != nil {
+		return nil, scanErr
 	}
 	if index < 0 {
 		return nil, errors.New("找不到与账本匹配的受管地址")
 	}
 	row := root.Content[index]
+	if replacement != "" {
+		field(field(row, "config"), "trustedHosts").Value = replacement
+	}
 	if sameTrustNode(managed, row) {
 		root.Content = append(root.Content[:index], root.Content[index+1:]...)
 	} else {

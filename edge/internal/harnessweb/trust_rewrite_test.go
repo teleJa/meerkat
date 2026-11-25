@@ -241,6 +241,114 @@ func TestReleaseTrustArrayCounts(t *testing.T) {
 	}
 }
 
+func TestTrustMoveAfterManualAppendAndCRLF(t *testing.T) {
+	for _, manual := range []string{"manual.test:80", "second.test:80"} {
+		for _, final := range []string{"second.test:80", "third.test:80"} {
+			t.Run(manual+"/"+final, func(t *testing.T) {
+				home, state := t.TempDir(), t.TempDir()
+				profile := filepath.Join(home, "profiles", "lab")
+				if err := os.MkdirAll(profile, 0700); err != nil {
+					t.Fatal(err)
+				}
+				patch := filepath.Join(profile, "cordis.patch.yml")
+				read := func() string {
+					t.Helper()
+					b, err := os.ReadFile(patch)
+					if err != nil {
+						t.Fatal(err)
+					}
+					return string(b)
+				}
+				write := func(s string) {
+					t.Helper()
+					if err := os.WriteFile(patch, []byte(s), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				owner := NewTrustOwner(state, "fixture")
+				update := func(host string) {
+					t.Helper()
+					p, url := "", ""
+					if host != "" {
+						p, url = "lab", "http://"+host
+					}
+					if err := UpdateTrust(home, state, &owner, p, url); err != nil {
+						t.Fatal(err)
+					}
+				}
+				update("first.test:80")
+				var doc yaml.Node
+				if err := yaml.Unmarshal([]byte(read()), &doc); err != nil {
+					t.Fatal(err)
+				}
+				hosts := field(field(doc.Content[0].Content[0], "config"), "trustedHosts")
+				hosts.Value = strings.Replace(hosts.Value, `["first.test:80"]`, `["first.test:80","`+manual+`"]`, 1)
+				data, err := yaml.Marshal(&doc)
+				if err != nil {
+					t.Fatal(err)
+				}
+				write(string(data))
+				moves := []string{"second.test:80"}
+				if final != moves[0] {
+					moves = append(moves, final)
+				}
+				for _, host := range append(moves, "") {
+					update(host)
+					write(strings.ReplaceAll(strings.ReplaceAll(read(), "\r\n", "\n"), "\n", "\r\n"))
+				}
+				if err := yaml.Unmarshal([]byte(read()), &doc); err != nil {
+					t.Fatal(err)
+				}
+				rows := doc.Content[0].Content
+				if len(rows) != 1 {
+					t.Fatalf("expected one independent connection, got %d", len(rows))
+				}
+				got := field(field(rows[0], "config"), "trustedHosts").Value
+				want := strings.Replace(hosts.Value, `"first.test:80",`, "", 1)
+				if got != want {
+					t.Fatalf("released expression %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
+
+func TestTrustCandidateOrder(t *testing.T) {
+	block, err := trustBlock(nil, []string{"device.test:80"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dynamic := range []bool{false, true} {
+		var doc yaml.Node
+		if err := yaml.Unmarshal([]byte(block), &doc); err != nil {
+			t.Fatal(err)
+		}
+		expr := field(field(doc.Content[0].Content[0], "config"), "trustedHosts")
+		expr.Value = strings.Replace(expr.Value, "...([])", `...(["other.test:80"])`, 1)
+		operand := `"manual.test:80"`
+		if dynamic {
+			operand = `ctx.get('ownedHost')`
+		}
+		expr.Value = strings.Replace(expr.Value, `"device.test:80"`, operand, 1)
+		other, err := yaml.Marshal(&doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, input := range []string{string(other) + block, block + string(other)} {
+			got, err := removeSerializedTrust([]byte(input), block, []string{"device.test:80"})
+			if dynamic {
+				if err != errTrustOwnership || got != nil {
+					t.Fatalf("ambiguous release: %s %v", got, err)
+				}
+				continue
+			}
+			if err != nil || !bytes.Contains(got, []byte("manual.test:80")) || bytes.Contains(got, []byte("device.test:80")) {
+				t.Fatalf("independent row: %s %v", got, err)
+			}
+		}
+	}
+}
+
 func TestTrustReleaseAfterManualRemoval(t *testing.T) {
 	block, err := trustBlock(nil, []string{"device"})
 	if err != nil {
