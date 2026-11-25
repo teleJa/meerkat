@@ -267,7 +267,7 @@ func UpdateTrust(home, stateDir string, owner *TrustOwner, profile, rawURL strin
 			if bytes.HasSuffix(cur, []byte(block)) && bytes.Count(cur, []byte(block)) == 1 && (!restored || string(cur) == block) {
 				base = bytes.Replace(cur, []byte(block), original, 1)
 			} else {
-				base, err = removeSerializedTrust(cur, block)
+				base, err = removeSerializedTrust(cur, block, oldHosts[p])
 				if err != nil {
 					return fmt.Errorf("profile %s: %w", p, err)
 				}

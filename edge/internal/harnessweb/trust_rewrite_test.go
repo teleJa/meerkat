@@ -2,11 +2,15 @@ package harnessweb
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestReviewTrustAfterOrdinaryProfileEdit(t *testing.T) {
@@ -172,4 +176,111 @@ func TestTrustRewriteKeepsIndependentEdits(t *testing.T) {
 	if strings.Contains(after, "webStartup") || strings.Contains(after, "oldSetting: one") || !strings.Contains(after, "manual.test:80") || !strings.Contains(after, "user-row") || !strings.Contains(after, "user-base") {
 		t.Fatalf("wrong released profile: %s", after)
 	}
+}
+
+func TestTrustExpressionAppendLifecycle(t *testing.T) {
+	home := t.TempDir()
+	profile := filepath.Join(home, "profiles", "lab")
+	if err := os.MkdirAll(profile, 0700); err != nil {
+		t.Fatal(err)
+	}
+	patch := filepath.Join(profile, "cordis.patch.yml")
+	write := func(b []byte) {
+		t.Helper()
+		if err := os.WriteFile(patch, b, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write([]byte("- id: connection\n  config:\n    trustedHosts: [base.test:80]\n"))
+	readRows := func() *yaml.Node {
+		t.Helper()
+		b, err := os.ReadFile(patch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc yaml.Node
+		if err = yaml.Unmarshal(b, &doc); err != nil {
+			t.Fatal(err)
+		}
+		return doc.Content[0]
+	}
+	lastExpr := func(root *yaml.Node) *yaml.Node {
+		return field(field(root.Content[len(root.Content)-1], "config"), "trustedHosts")
+	}
+	a, b := t.TempDir(), t.TempDir()
+	update := func(state, host string) {
+		t.Helper()
+		owner := NewTrustOwner(state, "fixture")
+		p := ""
+		if host != "" {
+			p = "lab"
+			host = "http://" + host
+		}
+		if err := UpdateTrust(home, state, &owner, p, host); err != nil {
+			t.Fatal(err)
+		}
+	}
+	update(a, "old.test:80")
+	update(b, "shared.test:80")
+	rows := readRows()
+	expr := lastExpr(rows)
+	// The persisted legacy block contains both devices. Append to its literal,
+	// its Set input, and its outer array without introducing a new patch row.
+	if !strings.HasSuffix(expr.Value, `"shared.test:80"]])]`) {
+		t.Fatal(expr.Value)
+	}
+	expr.Value = strings.TrimSuffix(expr.Value, `]])]`) + `, 'shared.test:80'], ...['extra.test:80']]), 'outer.test:80']`
+	data, err := yaml.Marshal(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(data)
+	check := func(want ...string) {
+		t.Helper()
+		expr := lastExpr(readRows()).Value
+		if entry := os.Getenv("DSH_INSTALL_DIR"); entry != "" {
+			const fixture = `
+const load = require('node:module').createRequire(require('node:path').join(process.argv[1], 'package.json'));
+const ctx = new (load('@deepseek-ai/cordis').Context)();
+ctx.provide('webStartup');
+ctx.set('webStartup', {trustedHosts: ['cli.test:80']});
+console.log(JSON.stringify(load('@deepseek-ai/cordis-plugin-loader').evaluate(ctx, process.argv[2])));
+`
+			out, err := exec.Command("node", "-e", fixture, entry, expr).CombinedOutput()
+			if err != nil {
+				t.Fatalf("loader: %v %s", err, out)
+			}
+			var got []string
+			if err = json.Unmarshal(out, &got); err != nil {
+				t.Fatal(err)
+			}
+			slices.Sort(got)
+			slices.Sort(want)
+			if !slices.Equal(got, want) {
+				t.Fatalf("effective=%v want=%v", got, want)
+			}
+			t.Logf("effective=%v", got)
+		} else {
+			for _, h := range want {
+				if h != "cli.test:80" && !strings.Contains(expr, h) {
+					t.Fatalf("missing %s in %s", h, expr)
+				}
+			}
+		}
+	}
+	manual := []string{"cli.test:80", "base.test:80", "extra.test:80", "outer.test:80", "shared.test:80"}
+	check(append(slices.Clone(manual), "old.test:80")...)
+	update(a, "new.test:80")
+	if strings.Contains(lastExpr(readRows()).Value, "old.test:80") {
+		t.Fatal("old lease retained")
+	}
+	check(append(slices.Clone(manual), "new.test:80")...)
+	update(b, "")
+	check(append(slices.Clone(manual), "new.test:80")...)
+	update(a, "")
+	update(a, "")
+	if strings.Contains(lastExpr(readRows()).Value, "new.test:80") {
+		t.Fatal("new lease retained")
+	}
+	check(manual...)
 }

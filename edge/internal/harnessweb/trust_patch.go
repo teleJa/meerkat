@@ -243,7 +243,33 @@ func releaseTrustValue(saved, current, underlying *yaml.Node) *yaml.Node {
 	return &result
 }
 
-func removeSerializedTrust(current []byte, block string) ([]byte, error) {
+// Only accept address literals appended to the generated arrays. Anchor the
+// owned prefix to the ledger so a later identical manual literal survives.
+// Leave unfamiliar edits untouched instead of interpreting profile JavaScript.
+const addressLiteral = `(?:"[a-zA-Z0-9.:\[\]_-]+"|'[a-zA-Z0-9.:\[\]_-]+')`
+const addressList = `\s*` + addressLiteral + `(?:\s*,\s*` + addressLiteral + `)*\s*,?\s*`
+const addressTerm = `(?:` + addressLiteral + `|\.\.\.\s*\[` + addressList + `\])`
+const additions = `(?:\s*,\s*` + addressTerm + `)*\s*,?\s*`
+
+var appendedTrustTail = regexp.MustCompile(`^(` + additions + `)\]` + additions + `\]\s*\)` + additions + `\]$`)
+
+func releaseAppendedHosts(saved, current *yaml.Node, owners []string) (string, bool) {
+	if current == nil || current.Kind != yaml.ScalarNode || current.Tag != saved.Tag || len(owners) == 0 {
+		return "", false
+	}
+	encoded, _ := json.Marshal(owners)
+	prefix, ok := strings.CutSuffix(saved.Value, "..."+string(encoded)+"])]")
+	if !ok {
+		return "", false
+	}
+	tail, ok := strings.CutPrefix(current.Value, prefix+"..."+strings.TrimSuffix(string(encoded), "]"))
+	if !ok || !appendedTrustTail.MatchString(tail) {
+		return "", false
+	}
+	return prefix + "...[" + strings.TrimPrefix(strings.TrimLeft(tail, " \t\r\n"), ","), true
+}
+
+func removeSerializedTrust(current []byte, block string, owners []string) ([]byte, error) {
 	parse := func(data []byte) (*yaml.Node, error) {
 		var doc yaml.Node
 		decoder := yaml.NewDecoder(bytes.NewReader(data))
@@ -279,7 +305,12 @@ func removeSerializedTrust(current []byte, block string) ([]byte, error) {
 		if id == nil || id.Value != "connection" || field(row, "insert") != nil || cfg == nil {
 			continue
 		}
-		if sameTrustNode(field(config, "trustedHosts"), field(cfg, "trustedHosts")) {
+		savedHosts, currentHosts := field(config, "trustedHosts"), field(cfg, "trustedHosts")
+		releasedExpr, appended := releaseAppendedHosts(savedHosts, currentHosts, owners)
+		if sameTrustNode(savedHosts, currentHosts) || appended {
+			if appended && currentHosts.Value != savedHosts.Value {
+				currentHosts.Value = releasedExpr
+			}
 			if index >= 0 {
 				return nil, errors.New("受管地址归属不唯一")
 			}
