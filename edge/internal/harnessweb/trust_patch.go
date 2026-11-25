@@ -184,3 +184,122 @@ func trustBlock(base []byte, hosts []string) (string, error) {
 	}
 	return block, nil
 }
+
+// A serializer can change quoting, indentation and key order. Compare YAML
+// values, including custom tags, without relying on their presentation.
+func sameTrustNode(a, b *yaml.Node) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.Kind != b.Kind || a.Tag != b.Tag || a.Value != b.Value || len(a.Content) != len(b.Content) {
+		return false
+	}
+	if a.Kind == yaml.MappingNode {
+		for i := 0; i < len(a.Content); i += 2 {
+			if !sameTrustNode(a.Content[i+1], field(b, a.Content[i].Value)) {
+				return false
+			}
+		}
+		return true
+	}
+	for i := range a.Content {
+		if !sameTrustNode(a.Content[i], b.Content[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// The managed row echoed the previous connection config. Drop echoed values
+// in favor of today's underlying config, keeping edits made to the row itself.
+func releaseTrustValue(saved, current, underlying *yaml.Node) *yaml.Node {
+	if sameTrustNode(saved, current) {
+		return underlying
+	}
+	if saved == nil || current == nil || saved.Kind != yaml.MappingNode || current.Kind != yaml.MappingNode {
+		return current
+	}
+	result := *current
+	result.Content = nil
+	for i := 0; i < len(current.Content); i += 2 {
+		key := current.Content[i]
+		var prior *yaml.Node
+		if underlying != nil {
+			prior = field(underlying, key.Value)
+		}
+		value := releaseTrustValue(field(saved, key.Value), current.Content[i+1], prior)
+		if value != nil {
+			result.Content = append(result.Content, key, value)
+		}
+	}
+	if underlying != nil {
+		for i := 0; i < len(underlying.Content); i += 2 {
+			key := underlying.Content[i]
+			if field(saved, key.Value) == nil && field(current, key.Value) == nil {
+				result.Content = append(result.Content, key, underlying.Content[i+1])
+			}
+		}
+	}
+	return &result
+}
+
+func removeSerializedTrust(current []byte, block string) ([]byte, error) {
+	parse := func(data []byte) (*yaml.Node, error) {
+		var doc yaml.Node
+		decoder := yaml.NewDecoder(bytes.NewReader(data))
+		if err := decoder.Decode(&doc); err != nil {
+			return nil, err
+		}
+		if len(doc.Content) != 1 || doc.Content[0].Kind != yaml.SequenceNode || decoder.Decode(&yaml.Node{}) != io.EOF {
+			return nil, errors.New("profile 补丁须为单个序列")
+		}
+		return doc.Content[0], nil
+	}
+	saved, err := parse([]byte(block))
+	if err != nil {
+		return nil, err
+	}
+	if len(saved.Content) == 0 {
+		return nil, errors.New("信任账本缺少受管行")
+	}
+	managed := saved.Content[len(saved.Content)-1]
+	config := field(managed, "config")
+	if config == nil || field(config, "trustedHosts") == nil {
+		return nil, errors.New("信任账本缺少受管地址")
+	}
+	root, err := parse(current)
+	if err != nil {
+		return nil, err
+	}
+	index := -1
+	var previous, inherited *yaml.Node
+	for i, row := range root.Content {
+		id := field(row, "id")
+		cfg := field(row, "config")
+		if id == nil || id.Value != "connection" || field(row, "insert") != nil || cfg == nil {
+			continue
+		}
+		if sameTrustNode(field(config, "trustedHosts"), field(cfg, "trustedHosts")) {
+			if index >= 0 {
+				return nil, errors.New("受管地址归属不唯一")
+			}
+			index, inherited = i, previous
+		}
+		previous = cfg
+	}
+	if index < 0 {
+		return nil, errors.New("找不到与账本匹配的受管地址")
+	}
+	row := root.Content[index]
+	if sameTrustNode(managed, row) {
+		root.Content = append(root.Content[:index], root.Content[index+1:]...)
+	} else {
+		cfg := field(row, "config")
+		released := releaseTrustValue(config, cfg, inherited)
+		if released == nil {
+			released = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		}
+		*cfg = *released
+	}
+	return yaml.Marshal(root)
+}

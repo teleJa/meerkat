@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -38,6 +39,22 @@ type trustLedger struct {
 	Original map[string][]byte `json:",omitempty"`
 	Created  map[string]bool   `json:",omitempty"`
 }
+
+func (l trustLedger) hosts(profile string) []string {
+	unique := map[string]bool{}
+	for _, lease := range l.Leases {
+		if lease.Profile == profile {
+			unique[lease.Authority] = true
+		}
+	}
+	hosts := make([]string, 0, len(unique))
+	for host := range unique {
+		hosts = append(hosts, host)
+	}
+	sort.Strings(hosts)
+	return hosts
+}
+
 type patchChange struct {
 	Profile       string
 	Before, After []byte
@@ -216,16 +233,26 @@ func UpdateTrust(home, stateDir string, owner *TrustOwner, profile, rawURL strin
 		return nil
 	}
 	if authority != "" {
+		profiles[profile] = true
+	}
+	oldHosts := make(map[string][]string, len(profiles))
+	for p := range profiles {
+		oldHosts[p] = ledger.hosts(p)
+	}
+	if authority != "" {
 		if owner == nil || owner.DeviceID == "" || profile == "" {
 			return errors.New("信任登记缺少设备身份或 profile")
 		}
-		profiles[profile] = true
 		ledger.Leases[key] = trustLease{*owner, profile, authority}
 	} else {
 		delete(ledger.Leases, key)
 	}
 	tx := trustTransaction{Ledger: ledger}
 	for p := range profiles {
+		hosts := ledger.hosts(p)
+		if slices.Equal(oldHosts[p], hosts) {
+			continue
+		}
 		path, err := patchFile(home, p)
 		if err != nil {
 			return err
@@ -236,23 +263,18 @@ func UpdateTrust(home, stateDir string, owner *TrustOwner, profile, rawURL strin
 		}
 		base := cur
 		if block := ledger.Blocks[p]; block != "" {
-			if bytes.Count(cur, []byte(block)) != 1 {
-				return fmt.Errorf("profile %s 的受管配置已更改，请核对", p)
+			original, restored := ledger.Original[p]
+			if bytes.HasSuffix(cur, []byte(block)) && bytes.Count(cur, []byte(block)) == 1 && (!restored || string(cur) == block) {
+				base = bytes.Replace(cur, []byte(block), original, 1)
+			} else {
+				base, err = removeSerializedTrust(cur, block)
+				if err != nil {
+					return fmt.Errorf("profile %s: %w", p, err)
+				}
 			}
-			base = bytes.Replace(cur, []byte(block), ledger.Original[p], 1)
+
 			delete(ledger.Original, p)
 		}
-		unique := map[string]bool{}
-		for _, lease := range ledger.Leases {
-			if lease.Profile == p {
-				unique[lease.Authority] = true
-			}
-		}
-		hosts := make([]string, 0, len(unique))
-		for host := range unique {
-			hosts = append(hosts, host)
-		}
-		sort.Strings(hosts)
 		patchBase := base
 		var rewritten bool
 		if len(hosts) > 0 {
