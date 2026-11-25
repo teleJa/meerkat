@@ -3,6 +3,7 @@ module meerkat/edge
 go 1.27.3
 
 require (
+	github.com/dop251/goja v0.0.0-20250630131328-58d95d85e994
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/shirou/gopsutil/v4 v4.25.10
 )
@@ -19,6 +20,7 @@ require (
 	github.com/gaissmai/bart v0.29.0 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
+	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/btree v1.1.3 // indirect

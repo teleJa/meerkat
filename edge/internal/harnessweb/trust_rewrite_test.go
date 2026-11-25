@@ -188,6 +188,33 @@ func TestTrustExpressionAppendLifecycle(t *testing.T) {
 	}
 }
 
+func TestReleaseEditedTrustExpression(t *testing.T) {
+	const original = `[...new Set([...(ctx.get('webStartup')?.trustedHosts ?? []), ...(["base"]), ...["device"]])]`
+	saved := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!js", Value: original}
+	const base = `(ctx.get('override') ?? [/* keep */ "device"])`
+	quoted := strings.Replace(original, `'webStartup'`, `"webStartup"`, 1)
+	edited := strings.Replace(quoted, `["base"]`, base, 1)
+	for _, tc := range []struct {
+		name, source, want string
+		ok                 bool
+	}{
+		{"quote only", quoted, original, true},
+		{"independent base", edited, strings.Replace(edited, `...["device"]`, `...[]`, 1), true},
+		{"manual grouped duplicate", strings.Replace(edited, `...["device"]`, `...[("device") /* , */, ("device")]`, 1), strings.Replace(edited, `...["device"]`, `...[ ("device")]`, 1), true},
+		{"owned prefix moved", strings.Replace(edited, `...["device"]`, `...["manual", "device"]`, 1), "", false},
+		{"different constructor", strings.Replace(edited, "new Set", "new Other", 1), "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := *saved
+			current.Value = tc.source
+			got, ok := releaseAppendedHosts(saved, &current, []string{"device"})
+			if ok != tc.ok || got != tc.want {
+				t.Fatalf("got (%q,%v), want (%q,%v)", got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
 func testTrustExpressionAppendLifecycle(t *testing.T, formatted string) {
 	home := t.TempDir()
 	profile := filepath.Join(home, "profiles", "lab")
@@ -241,6 +268,10 @@ func testTrustExpressionAppendLifecycle(t *testing.T, formatted string) {
 	}
 	expr.Value = strings.TrimSuffix(expr.Value, `]])]`) + `, 'shared.test:80'], ...['extra.test:80']]), 'outer.test:80']`
 	expr.Value = strings.Replace(expr.Value, `"old.test:80","shared.test:80"`, formatted, 1)
+	expr.Value = strings.Replace(expr.Value, `ctx.get('webStartup')`, `ctx /* wrapper */ .get( "webStartup" )`, 1)
+	const editedBase = `[/* 用户编辑 */ 'edited.test:80']`
+	expr.Value = strings.Replace(expr.Value, `["base.test:80"]`, editedBase, 1)
+
 	data, err := yaml.Marshal(rows)
 	if err != nil {
 		t.Fatal(err)
@@ -254,6 +285,9 @@ func testTrustExpressionAppendLifecycle(t *testing.T, formatted string) {
 	check := func(want ...string) {
 		t.Helper()
 		expr := lastExpr(readRows()).Value
+		if !strings.Contains(expr, editedBase) {
+			t.Fatalf("lost current base source: %s", expr)
+		}
 		if entry := os.Getenv("DSH_INSTALL_DIR"); entry != "" {
 			const fixture = `
 const load = require('node:module').createRequire(require('node:path').join(process.argv[1], 'package.json'));
@@ -284,7 +318,7 @@ console.log(JSON.stringify(load('@deepseek-ai/cordis-plugin-loader').evaluate(ct
 			}
 		}
 	}
-	manual := []string{"cli.test:80", "base.test:80", "extra.test:80", "outer.test:80", "shared.test:80"}
+	manual := []string{"cli.test:80", "edited.test:80", "extra.test:80", "outer.test:80", "shared.test:80"}
 	check(append(slices.Clone(manual), "old.test:80")...)
 	update(a, "new.test:80")
 	if strings.Contains(lastExpr(readRows()).Value, "old.test:80") {

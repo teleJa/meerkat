@@ -243,52 +243,6 @@ func releaseTrustValue(saved, current, underlying *yaml.Node) *yaml.Node {
 	return &result
 }
 
-// Only accept address literals appended to the generated arrays. Anchor the
-// owned prefix to the ledger so a later identical manual literal survives.
-// Leave unfamiliar edits untouched instead of interpreting profile JavaScript.
-const addressLiteral = `(?:"[a-zA-Z0-9.:\[\]_-]+"|'[a-zA-Z0-9.:\[\]_-]+')`
-const addressList = `\s*` + addressLiteral + `(?:\s*,\s*` + addressLiteral + `)*\s*,?\s*`
-const addressTerm = `(?:` + addressLiteral + `|\.\.\.\s*\[` + addressList + `\])`
-const additions = `(?:\s*,\s*` + addressTerm + `)*\s*,?\s*`
-
-// Capture the opaque base, the managed array body, and the two append sites.
-// Match the complete generated shape so an identical array inside the base
-// or in a manual spread cannot become the owner of a ledger entry.
-var managedExpression = regexp.MustCompile(`(?s)^\s*\[\s*\.\.\.\s*new\s+Set\s*\(\s*\[\s*\.\.\.\s*\(\s*ctx\.get\('webStartup'\)\?\.trustedHosts\s*\?\?\s*\[\s*\]\s*\)\s*,\s*\.\.\.\s*\((.*)\)\s*,\s*\.\.\.\s*\[(` + addressList + `)\](` + additions + `)\]\s*\)(` + additions + `)\]\s*$`)
-var hostElement = regexp.MustCompile(addressLiteral)
-
-func releaseAppendedHosts(saved, current *yaml.Node, owners []string) (string, bool) {
-	if current == nil || current.Kind != yaml.ScalarNode || current.Tag != saved.Tag || len(owners) == 0 {
-		return "", false
-	}
-	before := managedExpression.FindStringSubmatch(saved.Value)
-	span := managedExpression.FindStringSubmatchIndex(current.Value)
-	if before == nil || span == nil || before[1] != current.Value[span[2]:span[3]] {
-		return "", false
-	}
-	body := current.Value[span[4]:span[5]]
-	elements := hostElement.FindAllStringIndex(body, -1)
-	savedElements := hostElement.FindAllString(before[2], -1)
-	if len(savedElements) != len(owners) || len(elements) < len(owners) {
-		return "", false
-	}
-	for i, owner := range owners {
-		pos := elements[i]
-		prior := savedElements[i]
-		if prior[1:len(prior)-1] != owner || body[pos[0]+1:pos[1]-1] != owner {
-			return "", false
-		}
-	}
-	end := span[5]
-	if len(elements) > len(owners) {
-		end = span[4] + elements[len(owners)][0]
-	} else if !hostElement.MatchString(current.Value[span[6]:span[7]]) && !hostElement.MatchString(current.Value[span[8]:span[9]]) {
-		// Formatting alone should release the entire echoed field.
-		return saved.Value, true
-	}
-	return current.Value[:span[4]] + current.Value[end:], true
-}
-
 func removeSerializedTrust(current []byte, block string, owners []string) ([]byte, error) {
 	parse := func(data []byte) (*yaml.Node, error) {
 		var doc yaml.Node
