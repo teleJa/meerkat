@@ -13,7 +13,7 @@ import (
 // The fixture was written by 225d6c3. Only its machine-local lease keys
 // were shortened to directory names so they can be relocated for each test.
 func TestLegacyExactRow(t *testing.T) {
-	for _, route := range []string{"release", "promote", "reordered", "duplicate"} {
+	for _, route := range []string{"release", "promote", "reordered", "duplicate", "edited-copy-first", "edited-copy-last"} {
 		t.Run(route, func(t *testing.T) {
 			read := func(path string) []byte {
 				t.Helper()
@@ -78,6 +78,16 @@ func TestLegacyExactRow(t *testing.T) {
 			if route == "duplicate" {
 				cur += block
 			}
+			if strings.HasPrefix(route, "edited-copy-") {
+				edited := strings.Replace(block, `\"exclusive.test:80\",\"manual.test:80\"`, `\"exclusive.test:80\",\"manual.test:80\",\"added.test:80\"`, 1)
+				if edited == block {
+					t.Fatal("managed edit missed")
+				}
+				cur = base + edited + block
+				if route == "edited-copy-last" {
+					cur = base + block + edited
+				}
+			}
 			write(patch, []byte(cur))
 			exclusive := filepath.Join(real, "exclusive")
 			owner := owners["exclusive"].TrustOwner
@@ -94,8 +104,8 @@ func TestLegacyExactRow(t *testing.T) {
 				}
 			}
 			err = update("", "")
-			if route == "duplicate" {
-				if err == nil || string(read(patch)) != cur || !bytes.Equal(read(lp), data) {
+			if route == "duplicate" || strings.HasPrefix(route, "edited-copy-") {
+				if err == nil || !strings.Contains(err.Error(), "归属不唯一") || string(read(patch)) != cur || !bytes.Equal(read(lp), data) {
 					t.Fatal("duplicate row must preserve patch and ledger")
 				}
 				return
