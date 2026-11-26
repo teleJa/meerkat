@@ -61,17 +61,7 @@ fs.writeFileSync(path, String(doc));
 			t.Fatal(err)
 		}
 	} else {
-		entry, err := exec.LookPath("dsh")
-		if err != nil {
-			t.Skip("DSH CLI unavailable")
-		}
-		entry, err = filepath.EvalSymlinks(entry)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if filepath.Ext(entry) == ".cmd" {
-			entry = filepath.Join(filepath.Dir(entry), "node_modules", "@deepseek-ai", "dsh", "package.json")
-		}
+		entry := installedDSHEntry(t)
 		if output, err := exec.Command("node", "-e", serialize, patch, entry).CombinedOutput(); err != nil {
 			t.Fatalf("serializer: %v: %s", err, output)
 		}
@@ -153,6 +143,94 @@ func TestDiscardRetiredLedgerAndReconnect(t *testing.T) {
 				got, err = os.ReadFile(patch)
 				if err != nil || !bytes.HasPrefix(got, manual) || !bytes.Contains(got, []byte("new.test:443")) || bytes.Contains(got, []byte("exclusive.test")) {
 					t.Fatalf("unexpected reconnect: %q, %v", got, err)
+				}
+			})
+		}
+	}
+}
+
+func installedDSHEntry(t *testing.T) string {
+	t.Helper()
+	entry, err := exec.LookPath("dsh")
+	if err != nil {
+		if os.Getenv("MEERKAT_REQUIRE_DSH") == "1" {
+			t.Fatal(err)
+		}
+		t.Skip("DSH CLI unavailable")
+	}
+	entry, err = filepath.EvalSymlinks(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Ext(entry) == ".cmd" {
+		return filepath.Join(filepath.Dir(entry), "node_modules", "@deepseek-ai", "dsh", "package.json")
+	}
+	return entry
+}
+
+// The base is saved independently as the byte-for-byte cleanup oracle.
+func TestRetireResavedProfile(t *testing.T) {
+	for _, fixture := range []string{"legacy-trust", "legacy-trust-three"} {
+		for _, mode := range []string{"CRLF", "DSH"} {
+			t.Run(fixture+"/"+mode, func(t *testing.T) {
+				load := func(file string) []byte {
+					t.Helper()
+					b, err := os.ReadFile(filepath.Join("testdata", fixture, file))
+					if err != nil {
+						t.Fatal(err)
+					}
+					return b
+				}
+				full := load("patch.yml")
+				split := bytes.LastIndex(full, []byte("\n"+legacyHeading+"\n"))
+				if split < 1 {
+					t.Fatal("missing device heading")
+				}
+				save := func(b []byte) []byte {
+					t.Helper()
+					if mode == "CRLF" {
+						return bytes.ReplaceAll(b, []byte("\n"), []byte("\r\n"))
+					}
+					const serialize = `
+const requireDSH = require('node:module').createRequire(process.argv[1]);
+const source = require('node:fs').readFileSync(0, 'utf8');
+const doc = requireDSH('yaml').parseDocument(source, {
+  customTags: [{tag: 'tag:yaml.org,2002:js', resolve: value => value}]
+});
+if (doc.errors.length) throw doc.errors[0];
+process.stdout.write(String(doc));`
+					cmd := exec.Command("node", "-e", serialize, installedDSHEntry(t))
+					cmd.Stdin = bytes.NewReader(b)
+					out, err := cmd.Output()
+					if err != nil {
+						t.Fatal(err)
+					}
+					return out
+				}
+				prefix := []byte("- id: independent-plugin\n  disabled: true\n")
+				input := append(bytes.Clone(prefix), full...)
+				current := save(input)
+				want := save(append(prefix, full[:split]...))
+				if bytes.Equal(current, input) {
+					t.Fatal("missing rewrite")
+				}
+				home := t.TempDir()
+				patch := filepath.Join(home, "profiles", "lab", "cordis.patch.yml")
+				ledger := filepath.Join(home, "runtime", "meerkat-trusted-hosts.json")
+				for file, data := range map[string][]byte{patch: current, ledger: load("ledger.json")} {
+					if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(file, data, 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := UpdateTrust(home, t.TempDir(), nil, "", ""); err != nil {
+					t.Fatal(err)
+				}
+				got, err := os.ReadFile(patch)
+				if err != nil || !bytes.Equal(got, want) {
+					t.Fatalf("base mismatch: %q, want %q (%v)", got, want, err)
 				}
 			})
 		}

@@ -246,47 +246,124 @@ func blockDash(line []byte, indent string) bool {
 	return ok && (rest == "" || strings.ContainsRune(" \t\r\n", rune(rest[0])))
 }
 
-// The retired writer recorded the exact appended block. Match its sequence item
-// at a YAML row boundary and allow blank lines between its heading and item.
+// Compare decoded values, including custom tags. Mapping order and scalar
+// presentation can change when the profile is saved by DSH.
+func sameSlot(a, b *yaml.Node) bool {
+	if a.Kind != b.Kind || a.ShortTag() != b.ShortTag() || len(a.Content) != len(b.Content) {
+		return false
+	}
+	switch a.Kind {
+	case yaml.MappingNode:
+		used := make([]bool, len(b.Content)/2)
+		for i := 0; i < len(a.Content); i += 2 {
+			matched := false
+			for j := 0; j < len(b.Content); j += 2 {
+				if !used[j/2] && sameSlot(a.Content[i], b.Content[j]) && sameSlot(a.Content[i+1], b.Content[j+1]) {
+					used[j/2] = true
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		}
+	case yaml.SequenceNode:
+		for i, c := range a.Content {
+			if !sameSlot(c, b.Content[i]) {
+				return false
+			}
+		}
+	case yaml.ScalarNode:
+		return a.Value == b.Value
+	default:
+		return false
+	}
+	return true
+}
+
 func retireTrustBlock(src []byte, block string, original []byte) ([]byte, error) {
 	separator := "\n" + legacyHeading + "\n"
 	split := strings.LastIndex(block, separator)
-	if split < 0 || split+len(separator) == len(block) {
+	if split < 0 {
 		return nil, errors.New("旧账本缺少已记录的设备槽位")
 	}
-	heading := []byte(block[:split+len(separator)])
-	item := block[len(heading):]
+	recorded, err := inspectSlots([]byte(block[split+len(separator):]))
+	if err != nil || len(recorded.rows) != 1 {
+		return nil, errors.New("旧账本设备槽位无效")
+	}
 	layout, err := inspectSlots(src)
 	if err != nil {
 		return nil, err
 	}
-	start, end := -1, 0
-	for _, span := range layout.spans {
-		if string(src[span[0]:span[1]]) != item {
-			continue
-		}
-		before := src[:span[0]]
-		for !bytes.HasSuffix(before, heading) && len(before) > 0 {
-			line := bytes.TrimSuffix(before, []byte("\n"))
-			at := bytes.LastIndexByte(line, '\n') + 1
-			if len(bytes.TrimSpace(line[at:])) != 0 {
-				break
+	index := -1
+	for i, row := range layout.rows {
+		if sameSlot(row, recorded.rows[0]) {
+			if index >= 0 {
+				return nil, errors.New("旧账本的设备槽位在 profile 中重复")
 			}
-			before = before[:at]
+			index = i
 		}
-		if !bytes.HasSuffix(before, heading) {
-			return nil, errors.New("profile 中存在无法与旧账本核对的相同设备行")
-		}
-		if start >= 0 {
-			return nil, errors.New("旧账本的设备槽位在 profile 中重复")
-		}
-		start, end = len(before)-len(heading), span[1]
 	}
-	if start < 0 {
+	if index < 0 {
 		return nil, errors.New("profile 与旧账本的设备槽位不匹配")
 	}
-	result := append(bytes.Clone(src[:start]), original...)
-	return append(result, src[end:]...), nil
+	start, end := layout.spans[index][0], layout.spans[index][1]
+	// A flow sequence has its own item separator and cannot contain the old
+	// block prefix. Keep its current spelling just as for a marked flow slot.
+	if layout.flow {
+		return removeFlowSlot(src, layout, start, end), nil
+	}
+	// Walk back over blank lines to the heading directly attached to this row.
+	for pos := start; pos > 0; {
+		prev := bytes.LastIndexByte(src[:pos-1], '\n') + 1
+		line := bytes.TrimSpace(src[prev:pos])
+		if bytes.Equal(line, []byte(legacyHeading)) {
+			start = prev
+			if start > 0 {
+				eol := start - 1
+				if eol > 0 && src[eol-1] == '\r' {
+					eol--
+				}
+				// Keep the preceding row terminated if another row follows.
+				if end == len(src) || eol == 0 || src[eol-1] == '\n' {
+					start = eol
+				}
+			}
+			break
+		}
+		if len(line) != 0 {
+			break
+		}
+		pos = prev
+	}
+	// The legacy writer sometimes expanded a flow-style base before appending.
+	// Restore its saved spelling only while that exact expansion is present.
+	if original != nil && end == len(src) && bytes.Equal(src[:start], []byte(block[:split])) {
+		return bytes.Clone(original), nil
+	}
+	return append(bytes.Clone(src[:start]), src[end:]...), nil
+}
+
+func removeFlowSlot(src []byte, layout slotLayout, start, end int) []byte {
+	comma := -1
+	for _, at := range layout.commas {
+		if at >= end {
+			comma = at
+			break
+		}
+		if at < start {
+			comma = at
+		}
+	}
+	if comma >= 0 {
+		src = append(bytes.Clone(src[:comma]), src[comma+1:]...)
+		if comma < start {
+			start--
+			end--
+		}
+	}
+	return append(bytes.Clone(src[:start]), src[end:]...)
 }
 
 func rewriteTrustSlot(src []byte, hosts []string) ([]byte, error) {
@@ -307,28 +384,13 @@ func rewriteTrustSlot(src []byte, hosts []string) ([]byte, error) {
 				continue
 			}
 			if layout.flow {
-				// Remove just one separator; preserve intervening whitespace and comments.
-				comma := -1
-				for _, at := range layout.commas {
-					if at >= end {
-						comma = at
-						break
-					}
-					if at < start {
-						comma = at
-					}
+				src = removeFlowSlot(src, layout, start, end)
+			} else {
+				if marker.Value == "joined" && start > 0 && src[start-1] == '\n' && end == layout.insert {
+					start--
 				}
-				if comma >= 0 {
-					src = append(bytes.Clone(src[:comma]), src[comma+1:]...)
-					if comma < start {
-						start--
-						end--
-					}
-				}
-			} else if marker != nil && marker.Value == "joined" && start > 0 && src[start-1] == '\n' && end == layout.insert {
-				start--
+				src = append(bytes.Clone(src[:start]), src[end:]...)
 			}
-			src = append(bytes.Clone(src[:start]), src[end:]...)
 			removed = true
 			break
 		}
