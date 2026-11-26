@@ -2,7 +2,6 @@ package harnessweb
 
 import (
 	"bytes"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/goccy/go-yaml/lexer"
+	"github.com/goccy/go-yaml/token"
 	"gopkg.in/yaml.v3"
 )
 
@@ -85,65 +86,18 @@ func field(n *yaml.Node, key string) *yaml.Node {
 	return nil
 }
 
-// Flow-style documents cannot accept a block row at the end. Keep their
-// original representation in the ledger for exact restoration after release.
-func appendableBase(base []byte) ([]byte, bool, error) {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(base, &doc); err != nil {
-		return nil, false, err
-	}
-	if len(doc.Content) == 0 {
-		return base, false, nil
-	}
-	root := doc.Content[0]
-	if root.Kind != yaml.SequenceNode {
-		return nil, false, errors.New("profile 补丁须为序列")
-	}
-	if root.Style&yaml.FlowStyle == 0 && !bytes.HasSuffix(bytes.TrimSpace(base), []byte("...")) {
-		return base, false, nil
-	}
-	root.Style &^= yaml.FlowStyle
-	if len(root.Content) == 0 {
-		return nil, true, nil
-	}
-	out, err := yaml.Marshal(&doc)
-	return out, true, err
-}
-
-// Keep the user's bytes verbatim. Append a final Cordis patch that restates
-// the effective connection config since Cordis replaces config as a whole.
-func trustBlock(base []byte, hosts []string) (string, error) {
-	if len(hosts) == 0 {
-		return "", nil
-	}
+func managedRow(rows []*yaml.Node, hosts []string, marker string) (*yaml.Node, error) {
 	cfg := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	dec := yaml.NewDecoder(bytes.NewReader(base))
-	var doc yaml.Node
-	if err := dec.Decode(&doc); err != nil && err != io.EOF {
-		return "", err
-	}
-	if len(doc.Content) > 0 {
-		root := doc.Content[0]
-		if root.Kind != yaml.SequenceNode || root.Style&yaml.FlowStyle != 0 {
-			return "", errors.New("profile 补丁须为块序列")
-		}
-		for _, row := range root.Content {
-			if row.Kind != yaml.MappingNode {
-				return "", errors.New("无效的 profile 补丁行")
+	for _, row := range rows {
+		id := field(row, "id")
+		if id != nil && id.Value == "connection" && field(row, "insert") == nil {
+			if conf := field(row, "config"); conf != nil {
+				cfg = conf
 			}
-			id := field(row, "id")
-			if id != nil && id.Value == "connection" && field(row, "insert") == nil {
-				if conf := field(row, "config"); conf != nil {
-					cfg = conf
-				}
-			}
-		}
-		if err := dec.Decode(&doc); err != io.EOF {
-			return "", errors.New("不支持多文档补丁")
 		}
 	}
 	if cfg.Kind != yaml.MappingNode {
-		return "", errors.New("connection.config 须为映射")
+		return nil, errors.New("connection.config 须为映射")
 	}
 	original := field(cfg, "trustedHosts")
 	expr := "[]"
@@ -155,7 +109,7 @@ func trustBlock(base []byte, hosts []string) (string, error) {
 			var hosts []string
 			for _, item := range original.Content {
 				if item.Tag != "!!str" {
-					return "", errors.New("trustedHosts 包含非字符串")
+					return nil, errors.New("trustedHosts 包含非字符串")
 				}
 				hosts = append(hosts, item.Value)
 			}
@@ -164,7 +118,7 @@ func trustBlock(base []byte, hosts []string) (string, error) {
 				expr = string(data)
 			}
 		default:
-			return "", errors.New("无法保留原 trustedHosts 设置")
+			return nil, errors.New("无法保留原 trustedHosts 设置")
 		}
 	} else {
 		original = &yaml.Node{}
@@ -172,195 +126,239 @@ func trustBlock(base []byte, hosts []string) (string, error) {
 	}
 	managed, _ := json.Marshal(hosts)
 	*original = yaml.Node{Kind: yaml.ScalarNode, Tag: "tag:yaml.org,2002:js", Style: yaml.DoubleQuotedStyle | yaml.TaggedStyle, Value: fmt.Sprintf("[...new Set([...(ctx.get('webStartup')?.trustedHosts ?? []), ...(%s), ...%s])]", expr, managed)}
-	row := map[string]any{"id": "connection", "config": cfg, trustRowID: rand.Text()}
-	data, err := yaml.Marshal([]any{row})
-	if err != nil {
-		return "", err
-	}
-	block := "\n# Meerkat managed trusted hosts\n" + string(data)
-	var check []map[string]any
-	if err := yaml.Unmarshal(append(bytes.Clone(base), block...), &check); err != nil {
-		return "", err
-	}
-	if len(check) == 0 || check[len(check)-1]["id"] != "connection" {
-		return "", errors.New("无法追加 connection 补丁")
-	}
-	return block, nil
+	var row yaml.Node
+	err := row.Encode(map[string]any{"id": "connection", "config": cfg, trustRowID: marker})
+	return &row, err
 }
 
-// A serializer can change quoting, indentation and key order. Compare YAML
-// values, including custom tags, without relying on their presentation.
-func sameTrustNode(a, b *yaml.Node) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	if a.Kind != b.Kind || a.Tag != b.Tag || a.Value != b.Value || len(a.Content) != len(b.Content) {
-		return false
-	}
-	if a.Kind == yaml.MappingNode {
-		for i := 0; i < len(a.Content); i += 2 {
-			if !sameTrustNode(a.Content[i+1], field(b, a.Content[i].Value)) {
-				return false
-			}
-		}
-		return true
-	}
-	for i := range a.Content {
-		if !sameTrustNode(a.Content[i], b.Content[i]) {
-			return false
-		}
-	}
-	return true
+const legacyHeading = "# Meerkat managed trusted hosts"
+
+type slotLayout struct {
+	rows   []*yaml.Node
+	spans  [][2]int
+	insert int
+	indent string
+	flow   bool
+	commas []int
 }
 
-// The managed row echoed the previous connection config. Drop echoed values
-// in favor of today's underlying config, keeping edits made to the row itself.
-func releaseTrustValue(saved, current, underlying *yaml.Node) *yaml.Node {
-	if sameTrustNode(saved, current) {
-		return underlying
+func inspectSlots(src []byte) (slotLayout, error) {
+	layout := slotLayout{insert: len(src)}
+	decoder := yaml.NewDecoder(bytes.NewReader(src))
+	var doc yaml.Node
+	if err := decoder.Decode(&doc); err == io.EOF {
+		return layout, nil
+	} else if err != nil {
+		return layout, err
 	}
-	if saved == nil || current == nil || saved.Kind != yaml.MappingNode || current.Kind != yaml.MappingNode {
-		return current
+	if len(doc.Content) != 1 || doc.Content[0].Kind != yaml.SequenceNode || decoder.Decode(&yaml.Node{}) != io.EOF {
+		return layout, errors.New("profile 补丁须为单个序列")
 	}
-	result := *current
-	result.Content = nil
-	for i := 0; i < len(current.Content); i += 2 {
-		key := current.Content[i]
-		var prior *yaml.Node
-		if underlying != nil {
-			prior = field(underlying, key.Value)
-		}
-		value := releaseTrustValue(field(saved, key.Value), current.Content[i+1], prior)
-		if value != nil {
-			result.Content = append(result.Content, key, value)
+	root := doc.Content[0]
+	layout.rows = root.Content
+	for _, r := range layout.rows {
+		if r.Kind != yaml.MappingNode {
+			return layout, errors.New("无效的 profile 补丁行")
 		}
 	}
-	if underlying != nil {
-		for i := 0; i < len(underlying.Content); i += 2 {
-			key := underlying.Content[i]
-			if field(saved, key.Value) == nil && field(current, key.Value) == nil {
-				result.Content = append(result.Content, key, underlying.Content[i+1])
+	lines := bytes.SplitAfter(src, []byte("\n"))
+	offsets := make([]int, len(lines)+1)
+	for i, b := range lines {
+		offsets[i+1] = offsets[i] + len(b)
+	}
+	if root.Style&yaml.FlowStyle != 0 {
+		layout.flow = true
+		// Scan punctuation, ignoring delimiters inside strings, comments and nested values.
+		level, start, offset := 0, 0, 0
+		for _, tok := range lexer.Tokenize(string(src)) {
+			if !bytes.HasPrefix(src[offset:], []byte(tok.Origin)) {
+				return layout, errors.New("无法定位 flow 补丁原文")
 			}
-		}
-	}
-	return &result
-}
-
-func removeSerializedTrust(current []byte, block string, owners []string) ([]byte, error) {
-	parse := func(data []byte) (*yaml.Node, error) {
-		var doc yaml.Node
-		decoder := yaml.NewDecoder(bytes.NewReader(data))
-		if err := decoder.Decode(&doc); err != nil {
-			return nil, err
-		}
-		if len(doc.Content) != 1 || doc.Content[0].Kind != yaml.SequenceNode || decoder.Decode(&yaml.Node{}) != io.EOF {
-			return nil, errors.New("profile 补丁须为单个序列")
-		}
-		return doc.Content[0], nil
-	}
-	saved, err := parse([]byte(block))
-	if err != nil {
-		return nil, err
-	}
-	if len(saved.Content) == 0 {
-		return nil, errors.New("信任账本缺少受管行")
-	}
-	managed := saved.Content[len(saved.Content)-1]
-	config := field(managed, "config")
-	if config == nil || field(config, "trustedHosts") == nil {
-		return nil, errors.New("信任账本缺少受管地址")
-	}
-	root, err := parse(current)
-	if err != nil {
-		return nil, err
-	}
-	index := -1
-	var previous, inherited *yaml.Node
-	savedHosts := field(config, "trustedHosts")
-	marker := field(managed, trustRowID)
-	var history map[string]bool
-	if marker == nil {
-		history = inheritedTrustExpressions(savedHosts.Value)
-	} else {
-		matches := 0
-		for _, row := range root.Content {
-			if sameTrustNode(marker, field(row, trustRowID)) {
-				matches++
+			offset += len(tok.Origin)
+			switch tok.Type {
+			case token.SequenceStartType, token.MappingStartType, token.SequenceEndType, token.MappingEndType, token.CollectEntryType:
+			default:
+				continue
 			}
-		}
-		if matches > 1 {
-			return nil, errors.New("受管地址归属不唯一：受管行标识重复")
-		}
-		if matches == 0 {
-			return nil, errors.New("找不到账本中的受管行标识")
-		}
-	}
-	var replacement string
-	var scanErr error
-	historicalCandidates := 0
-	for i, row := range root.Content {
-		id := field(row, "id")
-		cfg := field(row, "config")
-		if id == nil || id.Value != "connection" || field(row, "insert") != nil || cfg == nil {
-			continue
-		}
-		currentHosts := field(cfg, "trustedHosts")
-		underlying := previous
-		previous = cfg
-		if marker != nil && !sameTrustNode(marker, field(row, trustRowID)) {
-			continue
-		}
-		if currentHosts == nil {
-			continue
-		}
-		releasedExpr, matched, err := releaseAppendedHosts(savedHosts, currentHosts, owners)
-		if marker == nil && currentHosts.Tag == savedHosts.Tag && recordedTrustExpression(history, currentHosts.Value) {
-			if matched || err != nil {
-				historicalCandidates++
-			}
-			continue
-		}
-		if err != nil {
-			scanErr = err
-			continue
-		}
-		if matched || sameTrustNode(savedHosts, currentHosts) {
-			if index >= 0 {
-				scanErr = errors.New("受管地址归属不唯一")
-			}
-			index, inherited, replacement = i, underlying, releasedExpr
-		}
-	}
-	if scanErr != nil {
-		return nil, scanErr
-	}
-	if index < 0 {
-		if historicalCandidates > 1 {
-			return nil, errors.New("受管地址归属不唯一：多行均符合旧手工配置与租约记录")
-		}
-		return nil, errors.New("找不到与账本匹配的受管地址")
-	}
-	row := root.Content[index]
-	if replacement != "" {
-		field(field(row, "config"), "trustedHosts").Value = replacement
-	}
-	if sameTrustNode(managed, row) {
-		root.Content = append(root.Content[:index], root.Content[index+1:]...)
-	} else {
-		cfg := field(row, "config")
-		released := releaseTrustValue(config, cfg, inherited)
-		if released == nil {
-			released = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		}
-		*cfg = *released
-		if marker != nil {
-			for i := 0; i < len(row.Content); i += 2 {
-				if row.Content[i].Value == trustRowID {
-					row.Content = append(row.Content[:i], row.Content[i+2:]...)
-					break
+			at := offset - len(tok.Origin) + strings.Index(tok.Origin, tok.Value)
+			switch tok.Type {
+			case token.SequenceStartType, token.MappingStartType:
+				if level == 1 {
+					start = at
+				}
+				level++
+			case token.MappingEndType, token.SequenceEndType:
+				level--
+				if level == 1 {
+					layout.spans = append(layout.spans, [2]int{start, at + 1})
+				}
+				if level == 0 {
+					layout.insert = at
+				}
+			case token.CollectEntryType:
+				if level == 1 {
+					layout.commas = append(layout.commas, at)
 				}
 			}
 		}
+		if len(layout.spans) != len(layout.rows) {
+			return layout, errors.New("无法定位 flow 补丁行")
+		}
+		return layout, nil
 	}
-	return yaml.Marshal(root)
+	layout.indent = strings.Repeat(" ", root.Column-1)
+	starts := make([]int, len(layout.rows)+1)
+	for i, r := range layout.rows {
+		line := r.Line - 1
+		for line >= 0 && !blockDash(lines[line], layout.indent) {
+			line--
+		}
+		if line < 0 || i > 0 && starts[i-1] >= line {
+			return layout, errors.New("无法定位块序列行")
+		}
+		starts[i] = line
+	}
+	end := len(lines)
+	for i := starts[len(layout.rows)-1]; i < len(lines); i++ {
+		if bytes.HasPrefix(lines[i], []byte("...")) {
+			end = i
+			layout.insert = offsets[i]
+			break
+		}
+	}
+	starts[len(layout.rows)] = end
+	for i := range layout.rows {
+		last := starts[i+1]
+		for last > starts[i]+1 {
+			line := bytes.TrimSpace(lines[last-1])
+			if len(line) > 0 && line[0] != '#' {
+				break
+			}
+			last--
+		}
+		layout.spans = append(layout.spans, [2]int{offsets[starts[i]], offsets[last]})
+	}
+	return layout, nil
+}
+
+func blockDash(line []byte, indent string) bool {
+	rest, ok := strings.CutPrefix(string(line), indent+"-")
+	return ok && (rest == "" || strings.ContainsRune(" \t\r\n", rune(rest[0])))
+}
+
+func rewriteTrustSlot(src []byte, hosts []string) ([]byte, error) {
+	for {
+		layout, err := inspectSlots(src)
+		if err != nil {
+			return nil, err
+		}
+		removed := false
+		for i, row := range layout.rows {
+			id := field(row, "id")
+			if id == nil || id.Value != "connection" || field(row, "insert") != nil {
+				continue
+			}
+			marker := field(row, trustRowID)
+			start, end := layout.spans[i][0], layout.spans[i][1]
+			// The old writer reserved the immediately preceding heading. Even rows copied
+			// from this slot belong to Meerkat while they carry either ownership marker.
+			before := bytes.TrimSuffix(src[:start], []byte("\n"))
+			line := bytes.LastIndexByte(before, '\n') + 1
+			heading := !layout.flow && string(bytes.TrimSpace(before[line:])) == legacyHeading
+			if marker == nil && !heading {
+				continue
+			}
+			if heading {
+				start = line
+				if start > 0 && src[start-1] == '\n' && (start == 1 || src[start-2] == '\n') {
+					start--
+				}
+			}
+			if layout.flow {
+				// Remove just one separator; preserve intervening whitespace and comments.
+				comma := -1
+				for _, at := range layout.commas {
+					if at >= end {
+						comma = at
+						break
+					}
+					if at < start {
+						comma = at
+					}
+				}
+				if comma >= 0 {
+					src = append(bytes.Clone(src[:comma]), src[comma+1:]...)
+					if comma < start {
+						start--
+						end--
+					}
+				}
+			} else if marker != nil && marker.Value == "joined" && start > 0 && src[start-1] == '\n' && end == layout.insert {
+				start--
+			}
+			src = append(bytes.Clone(src[:start]), src[end:]...)
+			removed = true
+			break
+		}
+		if removed {
+			continue
+		}
+		if len(hosts) == 0 {
+			return src, nil
+		}
+		at := layout.insert
+		marker := "leases"
+		prefix := ""
+		suffix := ""
+		if layout.flow {
+			if len(layout.rows) > 0 {
+				last := layout.spans[len(layout.rows)-1][1]
+				if len(layout.commas) > 0 && layout.commas[len(layout.commas)-1] >= last {
+					suffix = ","
+				} else {
+					prefix = ","
+				}
+			}
+		} else if at > 0 && src[at-1] != '\n' {
+			prefix = "\n"
+			marker = "joined"
+		}
+		row, err := managedRow(layout.rows, hosts, marker)
+		if err != nil {
+			return nil, err
+		}
+		if layout.flow {
+			setFlowStyle(row)
+		}
+		var data []byte
+		if layout.flow {
+			data, err = yaml.Marshal(row)
+			if err != nil {
+				return nil, err
+			}
+			data = bytes.TrimSuffix(data, []byte("\n"))
+		} else {
+			var sequence yaml.Node
+			sequence.Kind = yaml.SequenceNode
+			sequence.Content = []*yaml.Node{row}
+			data, err = yaml.Marshal(&sequence)
+			if err != nil {
+				return nil, err
+			}
+			data = []byte(layout.indent + strings.ReplaceAll(strings.TrimSuffix(string(data), "\n"), "\n", "\n"+layout.indent) + "\n")
+		}
+		result := append(bytes.Clone(src[:at]), prefix...)
+		result = append(result, data...)
+		result = append(result, suffix...)
+		result = append(result, src[at:]...)
+		return result, nil
+	}
+}
+func setFlowStyle(n *yaml.Node) {
+	if n.Kind == yaml.MappingNode || n.Kind == yaml.SequenceNode {
+		n.Style |= yaml.FlowStyle
+	}
+	for _, c := range n.Content {
+		setFlowStyle(c)
+	}
 }

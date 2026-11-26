@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -33,11 +32,31 @@ type trustLease struct {
 	Profile   string `json:"profile"`
 	Authority string `json:"authority"`
 }
+
+const trustLedgerVersion = 1
+
 type trustLedger struct {
-	Leases   map[string]trustLease
-	Blocks   map[string]string
-	Original map[string][]byte `json:",omitempty"`
-	Created  map[string]bool   `json:",omitempty"`
+	Version int
+	Leases  map[string]trustLease
+	Created map[string]bool `json:",omitempty"`
+}
+
+// Read only the profile index of a retired ledger. Its leases never grant access.
+func retiredProfiles(data []byte, profiles map[string]bool) error {
+	var index struct {
+		Blocks map[string]json.RawMessage
+		Leases map[string]struct{ Profile string }
+	}
+	if err := json.Unmarshal(data, &index); err != nil {
+		return err
+	}
+	for p := range index.Blocks {
+		profiles[p] = true
+	}
+	for _, l := range index.Leases {
+		profiles[l.Profile] = true
+	}
+	return nil
 }
 
 func (l trustLedger) hosts(profile string) []string {
@@ -202,42 +221,65 @@ func UpdateTrust(home, stateDir string, owner *TrustOwner, profile, rawURL strin
 	if err != nil {
 		return err
 	}
+	profiles := map[string]bool{}
+	retiringJournal := false
 	if data != nil {
 		var pending trustTransaction
 		if err := json.Unmarshal(data, &pending); err != nil {
 			return err
 		}
-		if err := pending.finish(home, ledgerPath, journal); err != nil {
-			return err
+		switch pending.Ledger.Version {
+		case trustLedgerVersion:
+			if err := pending.finish(home, ledgerPath, journal); err != nil {
+				return err
+			}
+		case 0:
+			retiringJournal = true
+			for _, ch := range pending.Changes {
+				profiles[ch.Profile] = true
+			}
+			for _, lease := range pending.Ledger.Leases {
+				profiles[lease.Profile] = true
+			}
+		default:
+			return errors.New("未知的待提交信任账本版本")
 		}
 	}
-	ledger := trustLedger{Leases: map[string]trustLease{}, Blocks: map[string]string{}, Created: map[string]bool{}, Original: map[string][]byte{}}
+	ledger := trustLedger{Version: trustLedgerVersion, Leases: map[string]trustLease{}, Created: map[string]bool{}}
 	data, err = readOptional(ledgerPath)
 	if err != nil {
 		return err
 	}
 	if data != nil {
-		if err := json.Unmarshal(data, &ledger); err != nil {
+		var header struct{ Version int }
+		if err := json.Unmarshal(data, &header); err != nil {
 			return err
 		}
+		switch header.Version {
+		case 0:
+			if err := retiredProfiles(data, profiles); err != nil {
+				return err
+			}
+		case trustLedgerVersion:
+			if err := json.Unmarshal(data, &ledger); err != nil {
+				return err
+			}
+		default:
+			return errors.New("未知的信任账本版本")
+		}
 	}
-	if ledger.Leases == nil || ledger.Blocks == nil {
+	if ledger.Leases == nil {
 		return errors.New("信任账本损坏")
 	}
 	previous, exists := ledger.Leases[key]
-	profiles := map[string]bool{}
 	if exists {
 		profiles[previous.Profile] = true
 	}
 	if profile == "" && exists && owner != nil && previous.TrustOwner != *owner {
 		return nil
 	}
-	if authority != "" {
+	if profile != "" {
 		profiles[profile] = true
-	}
-	oldHosts := make(map[string][]string, len(profiles))
-	for p := range profiles {
-		oldHosts[p] = ledger.hosts(p)
 	}
 	if authority != "" {
 		if owner == nil || owner.DeviceID == "" || profile == "" {
@@ -250,9 +292,6 @@ func UpdateTrust(home, stateDir string, owner *TrustOwner, profile, rawURL strin
 	tx := trustTransaction{Ledger: ledger}
 	for p := range profiles {
 		hosts := ledger.hosts(p)
-		if slices.Equal(oldHosts[p], hosts) {
-			continue
-		}
 		path, err := patchFile(home, p)
 		if err != nil {
 			return err
@@ -261,48 +300,14 @@ func UpdateTrust(home, stateDir string, owner *TrustOwner, profile, rawURL strin
 		if err != nil {
 			return err
 		}
-		base := cur
-		if block := ledger.Blocks[p]; block != "" {
-			original, restored := ledger.Original[p]
-			base, err = removeSerializedTrust(cur, block, oldHosts[p])
-			if err != nil {
-				return fmt.Errorf("profile %s: %w", p, err)
-			}
-			// Restore the original bytes only after checking the whole document
-			// for duplicate row identities, including reformatted copies.
-			if bytes.HasSuffix(cur, []byte(block)) && bytes.Count(cur, []byte(block)) == 1 && (!restored || string(cur) == block) {
-				base = bytes.Replace(cur, []byte(block), original, 1)
-			}
-
-			delete(ledger.Original, p)
-		}
-		patchBase := base
-		var rewritten bool
-		if len(hosts) > 0 {
-			patchBase, rewritten, err = appendableBase(base)
-			if err != nil {
-				return err
-			}
-		}
-		block, err := trustBlock(patchBase, hosts)
+		next, err := rewriteTrustSlot(cur, hosts)
 		if err != nil {
-			return err
+			return fmt.Errorf("profile %s: %w", p, err)
 		}
-		if block == "" {
-			delete(ledger.Blocks, p)
-		} else {
-			if rewritten {
-				ledger.Blocks[p] = string(patchBase) + block
-				ledger.Original[p] = base
-			} else {
-				ledger.Blocks[p] = block
-			}
-		}
-		next := append(bytes.Clone(patchBase), block...)
-		if block != "" && cur == nil {
+		if len(hosts) > 0 && cur == nil {
 			ledger.Created[p] = true
 		}
-		if block == "" {
+		if len(hosts) == 0 {
 			if ledger.Created[p] && len(next) == 0 {
 				next = nil
 			}
@@ -316,7 +321,7 @@ func UpdateTrust(home, stateDir string, owner *TrustOwner, profile, rawURL strin
 	if err != nil {
 		return err
 	}
-	if len(tx.Changes) == 0 && (bytes.Equal(encoded, data) || data == nil && len(ledger.Leases) == 0) {
+	if !retiringJournal && len(tx.Changes) == 0 && (bytes.Equal(encoded, data) || data == nil && len(ledger.Leases) == 0 && len(profiles) == 0) {
 		return nil
 	}
 	intent, err := json.Marshal(tx)

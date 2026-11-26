@@ -62,7 +62,7 @@ func TestTrustReplaysInterruptedCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx := trustTransaction{Ledger: trustLedger{Leases: map[string]trustLease{}, Blocks: map[string]string{}}, Changes: []patchChange{{Profile: "lab", Before: before, After: nil}}}
+	tx := trustTransaction{Ledger: trustLedger{Leases: map[string]trustLease{}, Version: trustLedgerVersion}, Changes: []patchChange{{Profile: "lab", Before: before, After: nil}}}
 	data, err := json.Marshal(tx)
 	if err != nil {
 		t.Fatal(err)

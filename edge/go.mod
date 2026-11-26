@@ -3,9 +3,12 @@ module meerkat/edge
 go 1.27.3
 
 require (
-	github.com/dop251/goja v0.0.0-20250630131328-58d95d85e994
+	github.com/goccy/go-yaml v1.19.2
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/shirou/gopsutil/v4 v4.25.10
+	golang.org/x/sys v0.49.0
+	gopkg.in/yaml.v3 v3.0.1
+	tailscale.com v1.104.5
 )
 
 require (
@@ -20,7 +23,6 @@ require (
 	github.com/gaissmai/bart v0.29.0 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/btree v1.1.3 // indirect
@@ -53,13 +55,10 @@ require (
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	golang.zx2c4.com/wireguard/windows v1.0.1 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gvisor.dev/gvisor v0.0.0-20260915211658-a6f909f08a72 // indirect
-	tailscale.com v1.104.5 // indirect
 )
