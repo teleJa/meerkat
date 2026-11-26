@@ -41,19 +41,21 @@ type trustLedger struct {
 	Created map[string]bool `json:",omitempty"`
 }
 
-// Read only the profile index of a retired ledger. Its leases never grant access.
-func retiredProfiles(data []byte, profiles map[string]bool) error {
-	var index struct {
-		Blocks map[string]json.RawMessage
-		Leases map[string]struct{ Profile string }
-	}
-	if err := json.Unmarshal(data, &index); err != nil {
-		return err
-	}
-	for p := range index.Blocks {
+// Legacy leases only identify profiles to clean. They never grant access.
+type retiredLedger struct {
+	Blocks   map[string]string
+	Original map[string][]byte
+	Leases   map[string]struct{ Profile string }
+}
+
+func (old retiredLedger) index(profiles map[string]bool) error {
+	for p := range old.Blocks {
 		profiles[p] = true
 	}
-	for _, l := range index.Leases {
+	for _, l := range old.Leases {
+		if old.Blocks[l.Profile] == "" {
+			return fmt.Errorf("profile %s 的旧账本缺少设备槽位", l.Profile)
+		}
 		profiles[l.Profile] = true
 	}
 	return nil
@@ -222,6 +224,8 @@ func UpdateTrust(home, stateDir string, owner *TrustOwner, profile, rawURL strin
 		return err
 	}
 	profiles := map[string]bool{}
+	var retired, pendingRetired retiredLedger
+	var pendingChanges []patchChange
 	retiringJournal := false
 	if data != nil {
 		var pending trustTransaction
@@ -235,11 +239,17 @@ func UpdateTrust(home, stateDir string, owner *TrustOwner, profile, rawURL strin
 			}
 		case 0:
 			retiringJournal = true
-			for _, ch := range pending.Changes {
-				profiles[ch.Profile] = true
+			var old struct{ Ledger retiredLedger }
+			if err := json.Unmarshal(data, &old); err != nil {
+				return err
 			}
-			for _, lease := range pending.Ledger.Leases {
-				profiles[lease.Profile] = true
+			pendingRetired = old.Ledger
+			if err := pendingRetired.index(profiles); err != nil {
+				return err
+			}
+			pendingChanges = pending.Changes
+			for _, ch := range pendingChanges {
+				profiles[ch.Profile] = true
 			}
 		default:
 			return errors.New("未知的待提交信任账本版本")
@@ -257,7 +267,10 @@ func UpdateTrust(home, stateDir string, owner *TrustOwner, profile, rawURL strin
 		}
 		switch header.Version {
 		case 0:
-			if err := retiredProfiles(data, profiles); err != nil {
+			if err := json.Unmarshal(data, &retired); err != nil {
+				return err
+			}
+			if err := retired.index(profiles); err != nil {
 				return err
 			}
 		case trustLedgerVersion:
@@ -300,7 +313,27 @@ func UpdateTrust(home, stateDir string, owner *TrustOwner, profile, rawURL strin
 		if err != nil {
 			return err
 		}
-		next, err := rewriteTrustSlot(cur, hosts)
+		snapshot := retired
+		for _, change := range pendingChanges {
+			if change.Profile != p {
+				continue
+			}
+			switch {
+			case bytes.Equal(cur, change.After):
+				snapshot = pendingRetired
+			case bytes.Equal(cur, change.Before):
+			default:
+				return fmt.Errorf("profile %s 与旧事务快照不匹配", p)
+			}
+		}
+		base := cur
+		if block, ok := snapshot.Blocks[p]; ok && cur != nil {
+			base, err = retireTrustBlock(cur, block, snapshot.Original[p])
+			if err != nil {
+				return fmt.Errorf("profile %s: %w", p, err)
+			}
+		}
+		next, err := rewriteTrustSlot(base, hosts)
 		if err != nil {
 			return fmt.Errorf("profile %s: %w", p, err)
 		}

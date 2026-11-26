@@ -246,6 +246,49 @@ func blockDash(line []byte, indent string) bool {
 	return ok && (rest == "" || strings.ContainsRune(" \t\r\n", rune(rest[0])))
 }
 
+// The retired writer recorded the exact appended block. Match its sequence item
+// at a YAML row boundary and allow blank lines between its heading and item.
+func retireTrustBlock(src []byte, block string, original []byte) ([]byte, error) {
+	separator := "\n" + legacyHeading + "\n"
+	split := strings.LastIndex(block, separator)
+	if split < 0 || split+len(separator) == len(block) {
+		return nil, errors.New("旧账本缺少已记录的设备槽位")
+	}
+	heading := []byte(block[:split+len(separator)])
+	item := block[len(heading):]
+	layout, err := inspectSlots(src)
+	if err != nil {
+		return nil, err
+	}
+	start, end := -1, 0
+	for _, span := range layout.spans {
+		if string(src[span[0]:span[1]]) != item {
+			continue
+		}
+		before := src[:span[0]]
+		for !bytes.HasSuffix(before, heading) && len(before) > 0 {
+			line := bytes.TrimSuffix(before, []byte("\n"))
+			at := bytes.LastIndexByte(line, '\n') + 1
+			if len(bytes.TrimSpace(line[at:])) != 0 {
+				break
+			}
+			before = before[:at]
+		}
+		if !bytes.HasSuffix(before, heading) {
+			return nil, errors.New("profile 中存在无法与旧账本核对的相同设备行")
+		}
+		if start >= 0 {
+			return nil, errors.New("旧账本的设备槽位在 profile 中重复")
+		}
+		start, end = len(before)-len(heading), span[1]
+	}
+	if start < 0 {
+		return nil, errors.New("profile 与旧账本的设备槽位不匹配")
+	}
+	result := append(bytes.Clone(src[:start]), original...)
+	return append(result, src[end:]...), nil
+}
+
 func rewriteTrustSlot(src []byte, hosts []string) ([]byte, error) {
 	for {
 		layout, err := inspectSlots(src)
@@ -260,19 +303,8 @@ func rewriteTrustSlot(src []byte, hosts []string) ([]byte, error) {
 			}
 			marker := field(row, trustRowID)
 			start, end := layout.spans[i][0], layout.spans[i][1]
-			// The old writer reserved the immediately preceding heading. Even rows copied
-			// from this slot belong to Meerkat while they carry either ownership marker.
-			before := bytes.TrimSuffix(src[:start], []byte("\n"))
-			line := bytes.LastIndexByte(before, '\n') + 1
-			heading := !layout.flow && string(bytes.TrimSpace(before[line:])) == legacyHeading
-			if marker == nil && !heading {
+			if marker == nil {
 				continue
-			}
-			if heading {
-				start = line
-				if start > 0 && src[start-1] == '\n' && (start == 1 || src[start-2] == '\n') {
-					start--
-				}
 			}
 			if layout.flow {
 				// Remove just one separator; preserve intervening whitespace and comments.

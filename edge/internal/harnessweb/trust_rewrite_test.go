@@ -93,55 +93,69 @@ fs.writeFileSync(path, String(doc));
 // These fixtures were emitted by the retired Edge writer, before row IDs existed.
 func TestDiscardRetiredLedgerAndReconnect(t *testing.T) {
 	for _, fixture := range []string{"legacy-trust", "legacy-trust-three"} {
-		t.Run(fixture, func(t *testing.T) {
-			home := t.TempDir()
-			profile := filepath.Join(home, "profiles", "lab")
-			runtimeDir := filepath.Join(home, "runtime")
-			for _, dir := range []string{runtimeDir, profile} {
-				if err := os.MkdirAll(dir, 0700); err != nil {
+		for _, variant := range []string{"manual heading", "device gap", "combined"} {
+			t.Run(fixture+"/"+variant, func(t *testing.T) {
+				home := t.TempDir()
+				profile := filepath.Join(home, "profiles", "lab")
+				runtimeDir := filepath.Join(home, "runtime")
+				for _, dir := range []string{runtimeDir, profile} {
+					if err := os.MkdirAll(dir, 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				ledgerPath := filepath.Join(runtimeDir, "meerkat-trusted-hosts.json")
+				patch := filepath.Join(profile, "cordis.patch.yml")
+				manual := []byte("# 独立配置\r\n- id: connection\r\n  config: {trustedHosts: [base.test:80]} # 用户配置\r\n")
+				for file, target := range map[string]string{"ledger.json": ledgerPath, "patch.yml": patch} {
+					raw, err := os.ReadFile(filepath.Join("testdata", fixture, file))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if file == "patch.yml" {
+						split := bytes.LastIndex(raw, []byte("\n# Meerkat managed trusted hosts\n"))
+						if split <= 0 {
+							t.Fatal("missing recorded slot")
+						}
+						base, slot := raw[:split], raw[split:]
+						if variant == "device gap" {
+							base = bytes.Replace(base, []byte("# Meerkat managed trusted hosts"), []byte("# independent connection"), 1)
+						}
+						if variant != "manual heading" {
+							slot = bytes.Replace(slot, []byte("hosts\n- config"), []byte("hosts\n\n- config"), 1)
+						}
+						manual = append(manual, base...)
+						raw = append(bytes.Clone(manual), slot...)
+					}
+					if err := os.WriteFile(target, raw, 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				state := t.TempDir()
+				owner := NewTrustOwner("reconnect", "test")
+				if err := UpdateTrust(home, state, nil, "", ""); err != nil {
 					t.Fatal(err)
 				}
-			}
-			ledgerPath := filepath.Join(runtimeDir, "meerkat-trusted-hosts.json")
-			patch := filepath.Join(profile, "cordis.patch.yml")
-			manual := []byte("# 独立配置\r\n- id: connection\r\n  config: {trustedHosts: [base.test:80]} # 用户配置\r\n")
-			for file, target := range map[string]string{"ledger.json": ledgerPath, "patch.yml": patch} {
-				raw, err := os.ReadFile(filepath.Join("testdata", fixture, file))
+				got, err := os.ReadFile(patch)
+				if err != nil || !bytes.Equal(got, manual) {
+					t.Fatalf("independent base after cleanup: %q, %v", got, err)
+				}
+				var ledger trustLedger
+				raw, err := os.ReadFile(ledgerPath)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if file == "patch.yml" {
-					raw = append(bytes.Clone(manual), raw...)
+				if err = json.Unmarshal(raw, &ledger); err != nil || ledger.Version != trustLedgerVersion || len(ledger.Leases) != 0 {
+					t.Fatalf("old leases survived retirement: %v", err)
 				}
-				if err := os.WriteFile(target, raw, 0600); err != nil {
+				if err := UpdateTrust(home, state, &owner, "lab", "https://new.test"); err != nil {
 					t.Fatal(err)
 				}
-			}
-			state := t.TempDir()
-			owner := NewTrustOwner("reconnect", "test")
-			if err := UpdateTrust(home, state, nil, "", ""); err != nil {
-				t.Fatal(err)
-			}
-			got, err := os.ReadFile(patch)
-			if err != nil || !bytes.Equal(got, manual) {
-				t.Fatalf("independent base after cleanup: %q, %v", got, err)
-			}
-			var ledger trustLedger
-			raw, err := os.ReadFile(ledgerPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = json.Unmarshal(raw, &ledger); err != nil || ledger.Version != trustLedgerVersion || len(ledger.Leases) != 0 {
-				t.Fatalf("old leases survived retirement: %v", err)
-			}
-			if err := UpdateTrust(home, state, &owner, "lab", "https://new.test"); err != nil {
-				t.Fatal(err)
-			}
-			got, err = os.ReadFile(patch)
-			if err != nil || !bytes.HasPrefix(got, manual) || !bytes.Contains(got, []byte("new.test:443")) || bytes.Contains(got, []byte("exclusive.test")) {
-				t.Fatalf("unexpected reconnect: %q, %v", got, err)
-			}
-		})
+				got, err = os.ReadFile(patch)
+				if err != nil || !bytes.HasPrefix(got, manual) || !bytes.Contains(got, []byte("new.test:443")) || bytes.Contains(got, []byte("exclusive.test")) {
+					t.Fatalf("unexpected reconnect: %q, %v", got, err)
+				}
+			})
+		}
 	}
 }
 
