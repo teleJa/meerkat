@@ -170,8 +170,8 @@ func installedDSHEntry(t *testing.T) string {
 
 // The base is saved independently as the byte-for-byte cleanup oracle.
 func TestRetireResavedProfile(t *testing.T) {
-	for _, fixture := range []string{"legacy-trust", "legacy-trust-three"} {
-		for _, mode := range []string{"CRLF", "DSH"} {
+	for _, fixture := range []string{"legacy-trust", "legacy-trust-three", "legacy-trust-alias"} {
+		for _, mode := range []string{"original", "CRLF", "DSH"} {
 			t.Run(fixture+"/"+mode, func(t *testing.T) {
 				load := func(file string) []byte {
 					t.Helper()
@@ -188,6 +188,9 @@ func TestRetireResavedProfile(t *testing.T) {
 				}
 				save := func(b []byte) []byte {
 					t.Helper()
+					if mode == "original" {
+						return b
+					}
 					if mode == "CRLF" {
 						return bytes.ReplaceAll(b, []byte("\n"), []byte("\r\n"))
 					}
@@ -211,7 +214,7 @@ process.stdout.write(String(doc));`
 				input := append(bytes.Clone(prefix), full...)
 				current := save(input)
 				want := save(append(prefix, full[:split]...))
-				if bytes.Equal(current, input) {
+				if mode != "original" && bytes.Equal(current, input) {
 					t.Fatal("missing rewrite")
 				}
 				home := t.TempDir()
@@ -231,6 +234,17 @@ process.stdout.write(String(doc));`
 				got, err := os.ReadFile(patch)
 				if err != nil || !bytes.Equal(got, want) {
 					t.Fatalf("base mismatch: %q, want %q (%v)", got, want, err)
+				}
+				state := t.TempDir()
+				owner := NewTrustOwner("reconnect", "test")
+				if err := UpdateTrust(home, state, &owner, "lab", "http://new.test"); err != nil {
+					t.Fatal(err)
+				}
+				if err := UpdateTrust(home, state, &owner, "", ""); err != nil {
+					t.Fatal(err)
+				}
+				if got, err := os.ReadFile(patch); err != nil || !bytes.Equal(got, want) {
+					t.Fatalf("base after reconnect and revoke: %q (%v)", got, err)
 				}
 			})
 		}

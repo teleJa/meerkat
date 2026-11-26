@@ -126,9 +126,12 @@ func managedRow(rows []*yaml.Node, hosts []string, marker string) (*yaml.Node, e
 	}
 	managed, _ := json.Marshal(hosts)
 	*original = yaml.Node{Kind: yaml.ScalarNode, Tag: "tag:yaml.org,2002:js", Style: yaml.DoubleQuotedStyle | yaml.TaggedStyle, Value: fmt.Sprintf("[...new Set([...(ctx.get('webStartup')?.trustedHosts ?? []), ...(%s), ...%s])]", expr, managed)}
-	var row yaml.Node
-	err := row.Encode(map[string]any{"id": "connection", "config": cfg, trustRowID: marker})
-	return &row, err
+	// Keep cfg in the profile's node graph. Encoding this row on its own
+	// would parse aliases without their anchors in preceding rows.
+	str := func(s string) *yaml.Node { return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: s} }
+	return &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{
+		str("config"), cfg, str("id"), str("connection"), str(trustRowID), str(marker),
+	}}, nil
 }
 
 const legacyHeading = "# Meerkat managed trusted hosts"
@@ -249,7 +252,15 @@ func blockDash(line []byte, indent string) bool {
 // Compare decoded values, including custom tags. Mapping order and scalar
 // presentation can change when the profile is saved by DSH.
 func sameSlot(a, b *yaml.Node) bool {
-	if a.Kind != b.Kind || a.ShortTag() != b.ShortTag() || len(a.Content) != len(b.Content) {
+	if a.Kind != b.Kind || a.Anchor != b.Anchor {
+		return false
+	}
+	if a.Kind == yaml.AliasNode {
+		// The ledger records the reference, not a snapshot of its target.
+		// Never follow Alias: anchors may contain a reference to themselves.
+		return a.Value == b.Value
+	}
+	if a.ShortTag() != b.ShortTag() || len(a.Content) != len(b.Content) {
 		return false
 	}
 	switch a.Kind {
@@ -288,17 +299,29 @@ func retireTrustBlock(src []byte, block string, original []byte) ([]byte, error)
 	if split < 0 {
 		return nil, errors.New("旧账本缺少已记录的设备槽位")
 	}
-	recorded, err := inspectSlots([]byte(block[split+len(separator):]))
-	if err != nil || len(recorded.rows) != 1 {
-		return nil, errors.New("旧账本设备槽位无效")
-	}
 	layout, err := inspectSlots(src)
 	if err != nil {
 		return nil, err
 	}
+	fragment := []byte(block[split+len(separator):])
+	recorded, err := inspectSlots(fragment)
+	expected := 1
+	if err != nil && len(layout.rows) > 0 {
+		// An old slot may reference an anchor in a different profile row.
+		// Supply the document context in block sequence form for parsing only.
+		prefix, marshalErr := yaml.Marshal(layout.rows)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		recorded, err = inspectSlots(append(prefix, fragment...))
+		expected += len(layout.rows)
+	}
+	if err != nil || len(recorded.rows) != expected {
+		return nil, errors.New("旧账本设备槽位无效")
+	}
 	index := -1
 	for i, row := range layout.rows {
-		if sameSlot(row, recorded.rows[0]) {
+		if sameSlot(row, recorded.rows[expected-1]) {
 			if index >= 0 {
 				return nil, errors.New("旧账本的设备槽位在 profile 中重复")
 			}

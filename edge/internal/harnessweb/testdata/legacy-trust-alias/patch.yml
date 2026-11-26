@@ -1,0 +1,13 @@
+- id: connection
+  config:
+    cookieMaxAgeDays: &days 9
+- id: connection
+  config:
+    cookieMaxAgeDays: *days
+    trustedHosts: [manual.test:80]
+
+# Meerkat managed trusted hosts
+- config:
+    cookieMaxAgeDays: *days
+    trustedHosts: !!js "[...new Set([...(ctx.get('webStartup')?.trustedHosts ?? []), ...([\"manual.test:80\"]), ...[\"active.test:80\",\"exclusive.test:80\"]])]"
+  id: connection
