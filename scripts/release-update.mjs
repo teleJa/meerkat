@@ -31,6 +31,11 @@ function verifyRelease() {
 
 if (action === 'verify-release' || action === 'publish') verifyRelease();
 if (action === 'verify-release') process.exit(0);
+if (action === 'publish' && manifestURL === '--verified-assets') {
+  const ci = spawnSync(process.execPath, [join(sourceDir, 'scripts/ci/release.mjs'), 'publish', dirname(installer)], { stdio: 'inherit' });
+  if (ci.error) throw ci.error;
+  process.exit(ci.status ?? 1);
+}
 const filename = process.env.MEERKAT_RELEASE_SIGNING_KEY_FILE;
 if (!filename) throw new Error('Set MEERKAT_RELEASE_SIGNING_KEY_FILE to the Ed25519 PEM file on the release machine.');
 const privateKey = createPrivateKey(readFileSync(filename));
