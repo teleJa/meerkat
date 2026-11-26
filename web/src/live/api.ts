@@ -247,6 +247,12 @@ export interface CancelTaskResponse {
 
 /** 桌面通知策略：Hub 侧保存，桌面端投递前复用同一份配置。 */
 export interface TurnNotificationSettings {
+  task_pool_enabled: boolean;
+  bot_events_enabled: boolean;
+  turn_events_enabled: boolean;
+  group_decisions_enabled: boolean;
+  approval_bypass: boolean;
+
   enabled: boolean;
   quiet_hours_enabled: boolean;
   quiet_start: string;

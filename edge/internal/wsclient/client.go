@@ -40,7 +40,8 @@ const (
 
 // Config 是 WS 客户端配置。
 type Config struct {
-	Identity identity.Identity
+	Identity        identity.Identity
+	OnAuthenticated func()
 	// HeartbeatInterval/MetricsInterval 非 0 时覆盖服务端下发的间隔。
 	HeartbeatInterval time.Duration
 	MetricsInterval   time.Duration
@@ -76,7 +77,8 @@ type Client struct {
 
 // FatalError 表示无法通过重连恢复的错误。
 type FatalError struct {
-	Msg string
+	Msg           string
+	DeviceRevoked bool
 }
 
 func (e *FatalError) Error() string {
@@ -172,6 +174,9 @@ func (c *Client) session(ctx context.Context) error {
 		c.backoff.Reset()
 	}
 
+	if c.cfg.OnAuthenticated != nil {
+		c.cfg.OnAuthenticated()
+	}
 	heartbeat, metricsInterval := c.resolveIntervals(ack)
 	c.log.Printf("已连接中心（heartbeat=%s metrics=%s 协议=%s）", heartbeat, metricsInterval, protocol.Version)
 	// 即使 URL 为空也要上报一次，让 Hub 清掉重启前的旧 token，避免打开旧 DSH 页面。
@@ -509,6 +514,10 @@ func (c *Client) reportIssues(err error) {
 func (c *Client) readError(err error) error {
 	switch {
 	case websocket.IsCloseError(err, 4401):
+		var closed *websocket.CloseError
+		if errors.As(err, &closed) && closed.Text == "device_revoked" {
+			return &FatalError{Msg: "4401 device_revoked", DeviceRevoked: true}
+		}
 		return &FatalError{Msg: "中心鉴权失败（关闭码 4401）：device_secret 无效或设备已被撤销，请重新配对"}
 	case websocket.IsCloseError(err, 4400):
 		return &FatalError{Msg: "中心判定协议错误（关闭码 4400）：请检查 Edge 与中心协议版本"}

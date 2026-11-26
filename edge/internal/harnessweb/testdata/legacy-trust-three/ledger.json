@@ -1,0 +1,25 @@
+{
+  "Leases": {
+    "active": {
+      "device_id": "active",
+      "secret_fp": "f16d05ec6b29248d",
+      "profile": "lab",
+      "authority": "active.test:80"
+    },
+    "device": {
+      "device_id": "device",
+      "secret_fp": "f16d05ec6b29248d",
+      "profile": "lab",
+      "authority": "manual.test:80"
+    },
+    "exclusive": {
+      "device_id": "exclusive",
+      "secret_fp": "f16d05ec6b29248d",
+      "profile": "lab",
+      "authority": "exclusive.test:80"
+    }
+  },
+  "Blocks": {
+    "lab": "\n# Meerkat managed trusted hosts\n- config:\n    trustedHosts: !!js \"[...new Set([...(ctx.get('webStartup')?.trustedHosts ?? []), ...([...new Set([...(ctx.get('webStartup')?.trustedHosts ?? []), ...([]), ...[\\\"manual.test:80\\\"]])]), ...[\\\"active.test:80\\\",\\\"exclusive.test:80\\\",\\\"manual.test:80\\\"]])]\"\n  id: connection\n"
+  }
+}

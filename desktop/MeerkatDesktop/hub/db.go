@@ -281,6 +281,19 @@ func openDB(dbPath string) (*sql.DB, error) {
 			return nil, err
 		}
 	}
+	for name, defaultValue := range map[string]int{"task_pool_enabled": 1, "bot_events_enabled": 1, "turn_events_enabled": 1, "group_decisions_enabled": 1, "approval_bypass": 0} {
+		var exists int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('notification_settings') WHERE name=?`, name).Scan(&exists); err != nil {
+			db.Close()
+			return nil, err
+		}
+		if exists == 0 {
+			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE notification_settings ADD COLUMN %s INTEGER NOT NULL DEFAULT %d", name, defaultValue)); err != nil {
+				db.Close()
+				return nil, err
+			}
+		}
+	}
 	// 回合通知不再落库（用户要求不保留历史），旧库里的 turn_notifications 表
 	// 连同历史记录一并删掉。旧数据不可恢复——这张表只存过通知历史，没有别的消费者。
 	if _, err := db.Exec("DROP TABLE IF EXISTS turn_notifications"); err != nil {

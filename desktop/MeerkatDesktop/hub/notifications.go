@@ -19,6 +19,12 @@ import (
 
 // 桌面通知开关与免打扰配置。默认开启通知、22:00–08:00 静音。
 type NotificationSettings struct {
+	TaskPoolEnabled       bool `json:"task_pool_enabled"`
+	BotEventsEnabled      bool `json:"bot_events_enabled"`
+	TurnEventsEnabled     bool `json:"turn_events_enabled"`
+	GroupDecisionsEnabled bool `json:"group_decisions_enabled"`
+	ApprovalBypass        bool `json:"approval_bypass"`
+
 	Enabled           bool   `json:"enabled"`
 	QuietHoursEnabled bool   `json:"quiet_hours_enabled"`
 	QuietStart        string `json:"quiet_start"`
@@ -27,7 +33,12 @@ type NotificationSettings struct {
 
 func defaultNotificationSettings() NotificationSettings {
 	return NotificationSettings{
-		Enabled:           true,
+		Enabled:               true,
+		TaskPoolEnabled:       true,
+		BotEventsEnabled:      true,
+		TurnEventsEnabled:     true,
+		GroupDecisionsEnabled: true,
+
 		QuietHoursEnabled: true,
 		QuietStart:        "22:00",
 		QuietEnd:          "08:00",
@@ -38,6 +49,10 @@ func defaultNotificationSettings() NotificationSettings {
 // 不落库：历史记录没有使用价值，用户明确要求不保留。
 // ID 是进程内自增序号，仅用来区分同一次运行里的多条系统通知（并作为点击回调的键）。
 type TurnNotification struct {
+	Kind     string `json:"kind"`
+	DedupKey string `json:"dedup_key"`
+	ItemID   string `json:"item_id,omitempty"`
+
 	ID           int64  `json:"id"`
 	At           string `json:"at"`
 	DeviceID     string `json:"device_id"`
@@ -116,8 +131,8 @@ func (h *Hub) notificationSettings() (NotificationSettings, error) {
 	settings := defaultNotificationSettings()
 	var enabled, quiet int
 	err := h.db.QueryRow(
-		`SELECT enabled, quiet_hours_enabled, quiet_start, quiet_end FROM notification_settings WHERE id = 1`,
-	).Scan(&enabled, &quiet, &settings.QuietStart, &settings.QuietEnd)
+		`SELECT enabled, quiet_hours_enabled, quiet_start, quiet_end, task_pool_enabled, bot_events_enabled, turn_events_enabled, group_decisions_enabled, approval_bypass FROM notification_settings WHERE id = 1`,
+	).Scan(&enabled, &quiet, &settings.QuietStart, &settings.QuietEnd, &settings.TaskPoolEnabled, &settings.BotEventsEnabled, &settings.TurnEventsEnabled, &settings.GroupDecisionsEnabled, &settings.ApprovalBypass)
 	if errors.Is(err, sql.ErrNoRows) {
 		return settings, nil
 	}
@@ -131,16 +146,21 @@ func (h *Hub) notificationSettings() (NotificationSettings, error) {
 
 func (h *Hub) saveNotificationSettings(settings NotificationSettings) error {
 	_, err := h.db.Exec(
-		`INSERT INTO notification_settings (id, enabled, quiet_hours_enabled, quiet_start, quiet_end, updated_at)
-		 VALUES (1, ?, ?, ?, ?, ?)
+		`INSERT INTO notification_settings (id, enabled, quiet_hours_enabled, quiet_start, quiet_end, task_pool_enabled, bot_events_enabled, turn_events_enabled, group_decisions_enabled, approval_bypass, updated_at)
+		 VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   enabled = excluded.enabled,
 		   quiet_hours_enabled = excluded.quiet_hours_enabled,
 		   quiet_start = excluded.quiet_start,
 		   quiet_end = excluded.quiet_end,
+		   task_pool_enabled = excluded.task_pool_enabled,
+		   bot_events_enabled = excluded.bot_events_enabled,
+		   turn_events_enabled = excluded.turn_events_enabled,
+		   group_decisions_enabled = excluded.group_decisions_enabled,
+		   approval_bypass = excluded.approval_bypass,
 		   updated_at = excluded.updated_at`,
 		boolToInt(settings.Enabled), boolToInt(settings.QuietHoursEnabled),
-		settings.QuietStart, settings.QuietEnd, nowISO(time.Now()),
+		settings.QuietStart, settings.QuietEnd, settings.TaskPoolEnabled, settings.BotEventsEnabled, settings.TurnEventsEnabled, settings.GroupDecisionsEnabled, settings.ApprovalBypass, nowISO(time.Now()),
 	)
 	return err
 }
@@ -272,6 +292,7 @@ func (w *turnWatcher) runDevice(ctx context.Context, deviceID string) {
 			failures = 0
 			log.Printf("通知 watcher 已连接设备 %s（harness %s）", deviceID, watch.base)
 		}
+		watch.pollNotices(ctx)
 		if err := watch.poll(ctx, w); err != nil {
 			failures++
 			// DSH 短暂不可用时只记一次，避免刷日志。
@@ -312,6 +333,7 @@ func sleepContext(ctx context.Context, d time.Duration) bool {
 
 // deviceWatch 持有的是一台设备 DSH 的本地反代地址与登录 cookie。
 type deviceWatch struct {
+	tracker  noticeTracker
 	hub      *Hub
 	deviceID string
 	base     string
@@ -493,7 +515,7 @@ func (d *deviceWatch) poll(ctx context.Context, w *turnWatcher) error {
 		return err
 	}
 	for _, item := range sessions {
-		if !item.Running || item.Blank {
+		if !item.Running || item.Blank || d.tracker.hidden[item.SessionID] {
 			continue
 		}
 		d.mu.Lock()
@@ -603,6 +625,9 @@ func (d *deviceWatch) finish(ctx context.Context, w *turnWatcher, item dshSessio
 	}
 	// 不落库：直接把通知投递出去。ID 只是进程内序号，供系统通知与点击回调配对。
 	record.ID = w.nextNotificationID()
+	record.Kind = "turn." + strings.ReplaceAll(reason, "-", "_")
+	record.DedupKey = fmt.Sprintf("dsh:turn:%s:%s:%d", d.deviceID, item.SessionID, value.State.Cursor)
+	w.hub.publishNotification(record, turnWatcherInputCooldown)
 	w.deliver(record)
 }
 
@@ -685,7 +710,11 @@ func (h *Hub) handleNotificationSettings(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Hub) handleUpdateNotificationSettings(w http.ResponseWriter, r *http.Request) {
-	var body NotificationSettings
+	body, err := h.notificationSettings()
+	if err != nil {
+		writeError(w, 500, "internal_error", "读取通知设置失败")
+		return
+	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json")
 		return
@@ -709,6 +738,7 @@ func (h *Hub) handleUpdateNotificationSettings(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, "internal_error", "读取通知设置失败")
 		return
 	}
+	h.notifications.signal()
 	writeJSON(w, http.StatusOK, settings)
 }
 

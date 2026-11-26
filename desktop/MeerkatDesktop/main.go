@@ -560,7 +560,7 @@ func startEmbeddedHub() {
 		return
 	}
 	embeddedHub = instance
-	instance.SetTurnNotificationSink(deliverTurnNotification)
+
 	if err := instance.StartTSNet(); err != nil {
 		log.Printf("Hub 内嵌 tsnet 启动失败: %v", err)
 	}
@@ -820,13 +820,17 @@ func watchEdgeNetworkLogin(app *application.App) {
 	}
 }
 
-func startEdge() {
+func edgeCommand() string {
 	bin := bundledEdge()
 	if bin == "" {
 		if value := strings.TrimSpace(os.Getenv("MEERKAT_EDGE_BIN")); value != "" {
 			bin = value
 		}
 	}
+	return bin
+}
+func startEdge() {
+	bin := edgeCommand()
 	if bin == "" {
 		return
 	}
@@ -1013,9 +1017,33 @@ func parseJoinCode(code string) (joinCodePayload, error) {
 	return payload, nil
 }
 
+var nodeJoinMu sync.Mutex
+
 func writeNodeConfig(payload joinCodePayload) error {
+	nodeJoinMu.Lock()
+	defer nodeJoinMu.Unlock()
 	stateDir := filepath.Join(configDir(), "edge-node")
-	_ = os.RemoveAll(stateDir)
+	if _, err := os.Stat(stateDir); err == nil {
+		if edgeProcess != nil && filepath.Clean(appCfg.EdgeStateDir) == stateDir {
+			if err := stopDesktopEdge(); err != nil {
+				return err
+			}
+		}
+		bin := edgeCommand()
+		if bin == "" {
+			return fmt.Errorf("找不到 Edge，无法释放旧工作区信任")
+		}
+		cmd := exec.Command(bin, "trust-cleanup", "--state-dir", stateDir)
+		hideConsole(cmd)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("释放旧工作区信任失败: %w", err)
+		}
+		if err := os.RemoveAll(stateDir); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	home, _ := os.UserHomeDir()
 	cfg := appConfig{
 		Mode:          "node",
@@ -1089,6 +1117,7 @@ func restartSelf() {
 
 func newUIProxy(target *url.URL) http.Handler {
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.FlushInterval = -1
 	// 不继承系统代理，否则 Hub 在 tailnet 时请求会被 Clash 等代理拦截。
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
@@ -1406,6 +1435,19 @@ func buildUIHandler(dist fs.FS, proxy http.Handler) http.Handler {
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 			return
 		}
+		if r.URL.Path == "/desktop/notifications/test" {
+			if r.Method != "POST" || r.Header.Get("x-meerkat-request") != "1" {
+				http.Error(w, "invalid request", 403)
+				return
+			}
+			if err := sendTurnNotification(hub.TurnNotification{ID: time.Now().UnixNano(), Kind: "test", SessionTitle: "Meerkat 测试通知", Excerpt: "这台设备可以接收系统通知。"}); err != nil {
+				http.Error(w, err.Error(), 503)
+				return
+			}
+			setDesktopJSONHeader(w)
+			_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+			return
+		}
 		if r.URL.Path == "/desktop/notifications/permission" {
 			status := notificationPermissionStatus(r.Method == http.MethodPost)
 			if r.Method == http.MethodPost {
@@ -1473,22 +1515,29 @@ func buildUIHandler(dist fs.FS, proxy http.Handler) http.Handler {
 	})
 }
 
+func stopDesktopEdge() error {
+	if edgeProcess == nil {
+		return nil
+	}
+	_ = edgeParentPipe.Close()
+	timer := time.NewTimer(3 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-edgeDone:
+		return nil
+	case <-timer.C:
+	}
+	if err := edgeProcess.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	<-edgeDone
+	return nil
+}
+
 func cleanupChildren() {
 	cleanupOnce.Do(func() {
-		if edgeProcess != nil {
-			log.Printf("清理 Edge pid=%d", edgeProcess.Process.Pid)
-			_ = edgeParentPipe.Close()
-			timer := time.NewTimer(3 * time.Second)
-			defer timer.Stop()
-			select {
-			case <-edgeDone:
-			case <-timer.C:
-				if err := edgeProcess.Process.Kill(); err == nil || errors.Is(err, os.ErrProcessDone) {
-					<-edgeDone
-				} else {
-					log.Printf("结束 Edge 失败: %v", err)
-				}
-			}
+		if err := stopDesktopEdge(); err != nil {
+			log.Printf("结束 Edge 失败: %v", err)
 		}
 		if embeddedHub != nil {
 			log.Printf("关闭 Go Hub")
@@ -1517,6 +1566,9 @@ func edgeStatus() string {
 }
 
 func main() {
+	if err := loadToastProfile(); err != nil {
+		log.Fatal(err)
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
 		fmt.Println(appVersion)
 		return
@@ -1578,7 +1630,7 @@ func main() {
 		services = append(services, application.NewService(notificationService))
 	}
 	app := application.New(application.Options{
-		Name:        "Meerkat",
+		Name:        desktopApplicationName(),
 		Description: "Meerkat desktop control plane",
 		Services:    services,
 		Assets: application.AssetOptions{
@@ -1626,6 +1678,7 @@ func main() {
 	// 所以先按默认尺寸把窗口显示出来（保持今天的行为：事件万一没送达也只是
 	// 尺寸不变），等 ApplicationStarted 再按实际可用区收缩并居中。
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		registerToastProfile()
 		go fitMainWindowToScreen(app, window)
 		if edgeDone != nil {
 			go func() {

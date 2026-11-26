@@ -53,16 +53,7 @@ func setupNotificationService() {
 			log.Printf("桌面通知回调失败: %v", result.Error)
 			return
 		}
-		record, ok := takeTurnNotification(result.Response.ID)
-		if !ok {
-			log.Printf("收到未知通知点击: %q", result.Response.ID)
-			if mainWindow != nil {
-				mainWindow.Show()
-				mainWindow.Focus()
-			}
-			return
-		}
-		openTurnNotification(record)
+		openTurnNotification(clickedNotification(result.Response))
 	})
 }
 
@@ -76,47 +67,21 @@ func startNotificationWatcher() {
 			log.Printf("通知权限状态: %s（可在 设置 → 桌面通知 中重新申请）", requestNotificationPermission())
 		}
 	}()
-	go func() {
-		current := ""
-		for {
-			deviceID := localDeviceID()
-			if deviceID != "" && deviceID != current && embeddedHub != nil {
-				embeddedHub.StartTurnWatcher([]string{deviceID})
-				log.Printf("回合通知 watcher 已启动（本地设备 %s）", deviceID)
-				current = deviceID
-			}
-			time.Sleep(15 * time.Second)
-		}
-	}()
+	go runNotificationSubscriber()
 }
 
-// deliverTurnNotification 由 Hub watcher 在回合结束时调用（可能来自后台 goroutine）。
-func deliverTurnNotification(record hub.TurnNotification) {
-	if embeddedHub == nil {
-		return
+func sendTurnNotification(record hub.TurnNotification) error {
+	if notificationService == nil || notificationPermissionStatus(false) != "granted" {
+		return fmt.Errorf("系统通知权限尚未授予")
 	}
-	settings, err := embeddedHub.NotificationSettings()
-	if err != nil || !settings.Enabled {
-		return
-	}
-	if hub.InQuietHours(time.Now(), settings) {
-		log.Printf("免打扰时段，跳过回合通知: %s · %s", record.DeviceName, record.SessionTitle)
-		return
-	}
-	if notificationPermissionStatus(false) != "granted" {
-		log.Printf("通知权限未授予，跳过回合通知: %s · %s", record.DeviceName, record.SessionTitle)
-		return
-	}
-	if notificationService == nil {
-		return
-	}
-	notificationID := fmt.Sprintf("turn-%d", record.ID)
+	notificationID := fmt.Sprintf("mk-%d", record.ID)
 	rememberTurnNotification(notificationID, record)
 	options := notifications.NotificationOptions{
 		ID:    notificationID,
 		Title: notificationTitle(record),
 		Body:  notificationBody(record),
 		Data: map[string]any{
+			"item_id":      record.ItemID,
 			"device_id":    record.DeviceID,
 			"session_id":   record.SessionID,
 			"session":      record.SessionTitle,
@@ -125,15 +90,16 @@ func deliverTurnNotification(record hub.TurnNotification) {
 	}
 	if record.Reason == "idle" {
 		options.Subtitle = "回合结束 · " + formatDuration(record.DurationMS)
-	} else {
+	} else if record.Reason == "input-required" {
 		options.Subtitle = "回合暂停 · 等待你确认"
 	}
-	if err := notificationService.SendNotification(options); err != nil {
-		log.Printf("发送桌面通知失败: %v", err)
-	}
+	return notificationService.SendNotification(options)
 }
 
 func notificationTitle(record hub.TurnNotification) string {
+	if title := map[string]string{"pool.review_ready": "任务待验收", "pool.blocked": "任务受阻", "pool.delivery_failed": "任务投递失败", "bot.group_decision": "群内待决策", "bot.chief_mention": "群内提醒", "bot.chief_dm": "主智能体私信", "bot.action_required": "等待你回答", "bot.approval": "等待你审批"}[record.Kind]; title != "" {
+		return title
+	}
 	device := strings.TrimSpace(record.DeviceName)
 	title := strings.TrimSpace(record.SessionTitle)
 	switch {
@@ -149,6 +115,9 @@ func notificationTitle(record hub.TurnNotification) string {
 }
 
 func notificationBody(record hub.TurnNotification) string {
+	if record.ItemID != "" {
+		return record.SessionTitle
+	}
 	if record.Reason == "input-required" {
 		return "回合需要审批或回答，打开 Meerkat 继续。"
 	}
@@ -199,12 +168,26 @@ func takeTurnNotification(id string) (hub.TurnNotification, bool) {
 	return record, ok
 }
 
+// The original payload survives process restarts, while stream IDs and the
+// in-memory cache belong to the current run. Older pool toasts lack item_id.
+func clickedNotification(response notifications.NotificationResponse) hub.TurnNotification {
+	cached, _ := takeTurnNotification(response.ID)
+	item, hasItem := response.UserInfo["item_id"].(string)
+	device, _ := response.UserInfo["device_id"].(string)
+	if hasItem || (cached.ItemID == "" && device != "") {
+		return hub.TurnNotification{ItemID: item, DeviceID: device}
+	}
+	return cached
+}
+
 // openTurnNotification 把窗口带到前台并跳到对应设备的 DSH 页。
 func openTurnNotification(record hub.TurnNotification) {
 	if mainWindow != nil {
 		mainWindow.Show()
 		mainWindow.Focus()
-		if strings.TrimSpace(record.DeviceID) != "" {
+		if record.ItemID != "" {
+			mainWindow.ExecJS(fmt.Sprintf("window.location.hash = %q", "#/live/task-pool/"+url.PathEscape(record.ItemID)))
+		} else if strings.TrimSpace(record.DeviceID) != "" {
 			hash := "#/live/harness/" + url.PathEscape(record.DeviceID)
 			mainWindow.ExecJS(fmt.Sprintf("window.location.hash = %q", hash))
 		}

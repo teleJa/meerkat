@@ -49,6 +49,10 @@ type Hub struct {
 	harnessHTTP   map[string]*harnessProxy
 	harnessClosed bool
 	harnessLog    *harnessProxyLog
+	notifications *notificationBroker
+	notifyCancel  context.CancelFunc
+	notifyDone    chan struct{}
+	notifySync    chan struct{}
 	turnWatcher   *turnWatcher
 	poolCancel    context.CancelFunc
 	poolDone      chan struct{}
@@ -65,15 +69,17 @@ type harnessProxy struct {
 	target            string
 	login             harnessLoginCache
 	closed            atomic.Bool
+	connections       sync.Map // active upstream sockets, including upgraded requests
 	pathTransport     *http.Transport
 	upstreamTransport *http.Transport
 }
 
 type wsClient struct {
-	hub      *Hub
-	conn     *websocket.Conn
-	deviceID string
-	writeMu  sync.Mutex
+	hub        *Hub
+	conn       *websocket.Conn
+	deviceID   string
+	secretHash string
+	writeMu    sync.Mutex
 }
 
 func tokenHash(value string) string {
@@ -146,6 +152,8 @@ func New(cfg Config) (*Hub, error) {
 		harnessHTTP: map[string]*harnessProxy{},
 		harnessLog:  newHarnessProxyLog(cfg.DataDir),
 	}
+	h.notifications = newNotificationBroker()
+	h.notifySync = make(chan struct{}, 1)
 	h.turnWatcher = newTurnWatcher(h)
 	mux := http.NewServeMux()
 	h.registerHTTP(mux)
@@ -169,6 +177,10 @@ func (h *Hub) Start() error {
 		return err
 	}
 	h.listener = listener
+	notifyCtx, stopNotify := context.WithCancel(context.Background())
+	h.notifyCancel = stopNotify
+	h.notifyDone = make(chan struct{})
+	go h.runNotificationDevices(notifyCtx)
 	if strings.TrimSpace(h.cfg.TaskPoolBotDeviceID) != "" {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
@@ -187,6 +199,11 @@ func (h *Hub) Start() error {
 }
 
 func (h *Hub) Close() error {
+	if h.notifyCancel != nil {
+		h.notifyCancel()
+		<-h.notifyDone
+	}
+	close(h.notifications.done)
 	h.StopTurnWatcher()
 	if h.poolCancel != nil {
 		h.poolCancel()

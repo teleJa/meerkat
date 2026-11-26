@@ -51,8 +51,34 @@ func (entry *harnessProxy) RoundTrip(req *http.Request) (*http.Response, error) 
 	return entry.pathTransport.RoundTrip(req)
 }
 
+type harnessConn struct {
+	net.Conn
+	entry *harnessProxy
+}
+
+func (c *harnessConn) Close() error { c.entry.connections.Delete(c); return c.Conn.Close() }
+func (entry *harnessProxy) trackTransport(transport *http.Transport) {
+	dial := transport.DialContext
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if entry.closed.Load() {
+			return nil, errHarnessProxyClosed
+		}
+		raw, err := dial(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		c := &harnessConn{raw, entry}
+		entry.connections.Store(c, true)
+		if entry.closed.Load() {
+			_ = c.Close()
+			return nil, errHarnessProxyClosed
+		}
+		return c, nil
+	}
+}
 func (entry *harnessProxy) close() {
 	entry.closed.Store(true)
+	entry.connections.Range(func(key, value any) bool { _ = key.(*harnessConn).Close(); return true })
 	if entry.server != nil {
 		_ = entry.server.Close()
 	}
@@ -137,6 +163,7 @@ func (h *Hub) ensureHarnessProxyEntry(deviceID string) (string, *harnessProxy, e
 	entry := newHarnessProxy(port, targetKey)
 	entry.listener = listener
 	entry.server = server
+	entry.trackTransport(transport)
 	entry.upstreamTransport = transport
 	h.harnessHTTP[deviceID] = entry
 	go func() {

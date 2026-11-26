@@ -1,6 +1,7 @@
 package tsnetedge
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -74,6 +75,23 @@ func TestSetStateKeepsLocalAPIInformation(t *testing.T) {
 	status = readStatusFile(t, statusPath)
 	if status["local_api_error"] != "监听失败" {
 		t.Fatalf("local_api_error 未写入：%v", status["local_api_error"])
+	}
+}
+
+func TestLocalAPIStartsOnceAfterLateLogin(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service := &Service{hubURL: "http://100.64.0.1:7443", status: filepath.Join(t.TempDir(), "status.json"), log: testLogger(t)}
+	service.startLocalAPIWhenReady(ctx, "NeedsLogin", false)
+	service.startLocalAPIWhenReady(ctx, "Running", false)
+	if service.apiURL != "" {
+		t.Fatal("proxy started before login and address assignment")
+	}
+	service.startLocalAPIWhenReady(ctx, "Running", true)
+	first := service.apiURL
+	service.startLocalAPIWhenReady(ctx, "Running", true)
+	if first == "" || service.apiURL != first {
+		t.Fatalf("proxy URL after login %q, after refresh %q", first, service.apiURL)
 	}
 }
 

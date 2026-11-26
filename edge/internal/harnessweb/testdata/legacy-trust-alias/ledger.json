@@ -1,0 +1,19 @@
+{
+  "Leases": {
+    "active": {
+      "device_id": "fixture",
+      "secret_fp": "f16d05ec6b29248d",
+      "profile": "lab",
+      "authority": "active.test:80"
+    },
+    "exclusive": {
+      "device_id": "fixture",
+      "secret_fp": "f16d05ec6b29248d",
+      "profile": "lab",
+      "authority": "exclusive.test:80"
+    }
+  },
+  "Blocks": {
+    "lab": "\n# Meerkat managed trusted hosts\n- config:\n    cookieMaxAgeDays: *days\n    trustedHosts: !!js \"[...new Set([...(ctx.get('webStartup')?.trustedHosts ?? []), ...([\\\"manual.test:80\\\"]), ...[\\\"active.test:80\\\",\\\"exclusive.test:80\\\"]])]\"\n  id: connection\n"
+  }
+}
