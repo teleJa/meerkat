@@ -168,6 +168,7 @@ jobs:
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
+          IMMUTABILITY_READ_TOKEN: ${{ secrets.IMMUTABILITY_READ_TOKEN }}
         run: |
           version=$(<VERSION)
           node scripts/release-update.mjs publish "$version" "$RUNNER_TEMP/meerkat-release/Meerkat-Setup-$version.exe" --verified-assets

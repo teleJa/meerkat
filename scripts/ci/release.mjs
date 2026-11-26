@@ -1,3 +1,4 @@
+import { publishDraft, requireImmutability } from './release-draft.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash, createPublicKey, verify } from 'node:crypto';
@@ -54,11 +55,17 @@ function verifyAssets() {
 
 function publish() {
   tagEvent();
-  verifyAssets();
   const gh = (...args) => execFileSync('gh', args, { encoding: 'utf8' });
   const endpoint = `repos/${repo}/releases`;
   const api = (...args) => JSON.parse(gh('api', ...args));
-  const marker = `<!-- Meerkat Actions run ${process.env.GITHUB_RUN_ID} -->`;
+  requireImmutability(() => {
+    const token = process.env.IMMUTABILITY_READ_TOKEN;
+    assert.ok(token, 'Configure IMMUTABILITY_READ_TOKEN with repository Administration: read');
+    return JSON.parse(execFileSync('gh', ['api', `repos/${repo}/immutable-releases`], {
+      encoding: 'utf8', env: { ...process.env, GH_TOKEN: token },
+    }));
+  });
+  verifyAssets();
   const latest = api(`${endpoint}/latest`);
   const previousAsset = latest.assets.find(a => a.name === 'latest.json');
   assert.ok(previousAsset, 'Latest release is missing its signed manifest');
@@ -69,36 +76,8 @@ function publish() {
   const changed = parts.findIndex((n, i) => n !== old[i]);
   assert.ok(changed >= 0 && parts[changed] > old[changed], 'Version must advance beyond latest');
   assert.ok(code > previous.platforms['android-arm64'].versionCode, 'Android versionCode must advance');
-  const pages = api('--paginate', '--slurp', `${endpoint}?per_page=100`);
-  const matches = pages.flat().filter(r => r.tag_name === tag);
-  assert.ok(matches.length <= 1, 'Ambiguous release tag');
-  let [draft] = matches;
-  if (draft) {
-    assert.ok(draft.draft && draft.body === marker, 'Release already exists or belongs to another run');
-  } else {
-    draft = api(endpoint, '-f', `tag_name=${tag}`, '-f', `name=Meerkat ${tag}`, '-f', `body=${marker}`, '-F', 'draft=true');
-  }
-  const id = `${endpoint}/${draft.id}`;
   const files = names.map(name => ({ name, size: statSync(path(name)).size, digest: `sha256:${digest(name)}` }));
-  for (const file of files) {
-    const current = api(id);
-    assert.ok(current.draft && current.body === marker && current.tag_name === tag);
-    const stored = current.assets.find(a => a.name === file.name);
-    if (stored?.digest === file.digest && stored.state === 'uploaded' && stored.size === file.size) continue;
-    if (stored) gh('api', '-X', 'DELETE', `${endpoint}/assets/${stored.id}`);
-    const upload = `https://uploads.github.com/repos/${repo}/releases/${draft.id}/assets?name=${encodeURIComponent(file.name)}`;
-    gh('api', upload, '-H', 'Content-Type: application/octet-stream', '--input', path(file.name));
-  }
-  const current = api(id);
-  assert.ok(current.draft && current.tag_name === tag && current.body === marker);
-  assert.deepEqual(current.assets.map(a => a.name).sort(), names);
-  for (const file of files) {
-    const asset = current.assets.find(a => a.name === file.name);
-    assert.equal(asset.state, 'uploaded');
-    assert.equal(asset.digest, file.digest);
-    assert.equal(asset.size, file.size);
-  }
-  api('-X', 'PATCH', id, '-F', 'draft=false', '-f', 'make_latest=true', '-f', `body=Meerkat ${tag}`);
+  publishDraft({ api, repo, tag, runId: process.env.GITHUB_RUN_ID, files, path });
 }
 
 switch (command) {
