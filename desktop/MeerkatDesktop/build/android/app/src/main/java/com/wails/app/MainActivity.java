@@ -112,6 +112,7 @@ public class MainActivity extends AppCompatActivity {
         // Set up WebView
         setupWebView();
 
+        ServiceViewer.attach(this, webView, bridge, WAILS_SCHEME + "://" + WAILS_HOST);
         updater = new AppUpdater(this, webView);
         PairingQrScanner.attach(this, webView, WAILS_SCHEME + "://" + WAILS_HOST);
 

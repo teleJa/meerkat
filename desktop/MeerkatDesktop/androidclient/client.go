@@ -75,6 +75,7 @@ type Client struct {
 	store          SecureStore
 	server         *tsnet.Server
 	dialHub        func(context.Context, string, string) (net.Conn, error)
+	service        *serviceSession
 	proxy          *hubProxy
 	state          State
 	dshVersion     string
@@ -279,6 +280,37 @@ func (c *Client) Start() {
 	}
 	c.startProxy()
 	go c.monitor(logger)
+}
+
+// OpenService replaces the active service only after its new listener is ready.
+func (c *Client) OpenService(raw string) (string, error) {
+	target, err := serviceTarget(raw)
+	if err != nil {
+		return "", err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.dialHub == nil {
+		return "", fmt.Errorf("内嵌网络尚未启动")
+	}
+	session, err := startService(target, c.dialHub)
+	if err != nil {
+		return "", err
+	}
+	if c.service != nil {
+		c.service.close()
+	}
+	c.service = session
+	return session.entry(target), nil
+}
+
+func (c *Client) CloseService() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.service != nil {
+		c.service.close()
+		c.service = nil
+	}
 }
 
 func (c *Client) monitor(logger *log.Logger) {

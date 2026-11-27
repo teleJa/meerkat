@@ -176,6 +176,25 @@ func foregroundText(state androidclient.State) string {
 }
 
 func (c *androidClient) register(mux *http.ServeMux) {
+	// Only the native viewer calls these POST routes through serveAsset.
+	mux.HandleFunc("POST /client/service/open", func(w http.ResponseWriter, r *http.Request) {
+		if c.unavailable(w) {
+			return
+		}
+		entry, err := c.client.OpenService(r.URL.Query().Get("url"))
+		if err != nil {
+			// The JNI asset adapter only returns response bodies for status 200.
+			writeJSON(w, http.StatusOK, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]string{"url": entry})
+	})
+	mux.HandleFunc("POST /client/service/close", func(w http.ResponseWriter, r *http.Request) {
+		if !c.unavailable(w) {
+			c.client.CloseService()
+			writeJSON(w, 200, map[string]bool{"ok": true})
+		}
+	})
 	mux.HandleFunc("/client/state", c.handleState)
 	mux.HandleFunc("/client/pair/", c.handlePair)
 	mux.HandleFunc("POST /client/credential/unpair", c.handleUnpair)
