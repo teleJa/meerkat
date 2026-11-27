@@ -68,6 +68,7 @@ public class MainActivity extends AppCompatActivity {
     // network/screen broadcasts don't wake the app.
     private boolean systemReceiversRegistered = false;
     private WebViewAssetLoader assetLoader;
+    private ServiceViewer serviceViewer;
 
     // The Go-side dialog ID of the in-flight file picker (-1 when idle)
     private int pendingFilePickerCallbackID = -1;
@@ -112,7 +113,7 @@ public class MainActivity extends AppCompatActivity {
         // Set up WebView
         setupWebView();
 
-        ServiceViewer.attach(this, webView, bridge, WAILS_SCHEME + "://" + WAILS_HOST);
+        serviceViewer = new ServiceViewer(this, webView, bridge, WAILS_SCHEME + "://" + WAILS_HOST);
         updater = new AppUpdater(this, webView);
         PairingQrScanner.attach(this, webView, WAILS_SCHEME + "://" + WAILS_HOST);
 
@@ -956,6 +957,7 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        if (serviceViewer != null) serviceViewer.destroy();
         super.onDestroy();
         if (updater != null) updater.close();
         unregisterSystemEventReceivers();

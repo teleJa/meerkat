@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -35,6 +36,52 @@ func serviceTarget(raw string) (*url.URL, error) {
 	}
 	u.Host = net.JoinHostPort(ip.String(), strconv.Itoa(port))
 	return u, nil
+}
+
+// IDs are assigned on the Android UI thread, before dispatch. Remember the latest
+// intent even after closing so a delayed open cannot resurrect a dismissed page.
+type serviceSessions struct {
+	mu       sync.Mutex
+	latest   uint64
+	activeID uint64
+	active   *serviceSession
+}
+
+func (v *serviceSessions) open(id uint64, raw string, dial func(context.Context, string, string) (net.Conn, error)) (string, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if id <= v.latest {
+		return "", errors.New("服务窗口已过期")
+	}
+	v.latest = id
+	target, err := serviceTarget(raw)
+	if err != nil {
+		return "", err
+	}
+	if dial == nil {
+		return "", errors.New("内嵌网络尚未启动")
+	}
+	next, err := startService(target, dial)
+	if err != nil {
+		return "", err
+	}
+	if v.active != nil {
+		v.active.close()
+	}
+	v.active, v.activeID = next, id
+	return next.entry(target), nil
+}
+
+func (v *serviceSessions) close(id uint64) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if id > v.latest {
+		v.latest = id
+	}
+	if v.active != nil && v.activeID == id {
+		v.active.close()
+		v.active = nil
+	}
 }
 
 type serviceSession struct {

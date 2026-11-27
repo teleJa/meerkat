@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -181,7 +182,11 @@ func (c *androidClient) register(mux *http.ServeMux) {
 		if c.unavailable(w) {
 			return
 		}
-		entry, err := c.client.OpenService(r.URL.Query().Get("url"))
+		id, parseErr := strconv.ParseUint(r.URL.Query().Get("session"), 10, 63)
+		if parseErr != nil {
+			id = 0
+		}
+		entry, err := c.client.OpenService(id, r.URL.Query().Get("url"))
 		if err != nil {
 			// The JNI asset adapter only returns response bodies for status 200.
 			writeJSON(w, http.StatusOK, map[string]string{"error": err.Error()})
@@ -191,7 +196,12 @@ func (c *androidClient) register(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("POST /client/service/close", func(w http.ResponseWriter, r *http.Request) {
 		if !c.unavailable(w) {
-			c.client.CloseService()
+			id, err := strconv.ParseUint(r.URL.Query().Get("session"), 10, 63)
+			if err != nil || id == 0 {
+				http.Error(w, "invalid session", http.StatusBadRequest)
+				return
+			}
+			c.client.CloseService(id)
 			writeJSON(w, 200, map[string]bool{"ok": true})
 		}
 	})
