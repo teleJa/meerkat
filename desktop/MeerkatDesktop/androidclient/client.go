@@ -75,6 +75,7 @@ type Client struct {
 	store          SecureStore
 	server         *tsnet.Server
 	dialHub        func(context.Context, string, string) (net.Conn, error)
+	services       serviceSessions
 	proxy          *hubProxy
 	state          State
 	dshVersion     string
@@ -280,6 +281,15 @@ func (c *Client) Start() {
 	c.startProxy()
 	go c.monitor(logger)
 }
+
+func (c *Client) OpenService(id uint64, raw string) (string, error) {
+	c.mu.Lock()
+	dial := c.dialHub
+	c.mu.Unlock()
+	return c.services.open(id, raw, dial)
+}
+
+func (c *Client) CloseService(id uint64) { c.services.close(id) }
 
 func (c *Client) monitor(logger *log.Logger) {
 	client, err := c.server.LocalClient()
